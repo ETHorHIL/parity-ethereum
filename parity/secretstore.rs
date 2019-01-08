@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -24,6 +24,7 @@ use ethcore::miner::Miner;
 use ethkey::{Secret, Public};
 use sync::SyncProvider;
 use ethereum_types::Address;
+use parity_runtime::Executor;
 
 /// This node secret key.
 #[derive(Debug, PartialEq, Clone)]
@@ -100,14 +101,14 @@ pub struct Dependencies<'a> {
 
 #[cfg(not(feature = "secretstore"))]
 mod server {
-	use super::{Configuration, Dependencies};
+	use super::{Configuration, Dependencies, Executor};
 
 	/// Noop key server implementation
 	pub struct KeyServer;
 
 	impl KeyServer {
 		/// Create new noop key server
-		pub fn new(_conf: Configuration, _deps: Dependencies) -> Result<Self, String> {
+		pub fn new(_conf: Configuration, _deps: Dependencies, _executor: Executor) -> Result<Self, String> {
 			Ok(KeyServer)
 		}
 	}
@@ -120,7 +121,7 @@ mod server {
 	use ethkey::KeyPair;
 	use ansi_term::Colour::{Red, White};
 	use db;
-	use super::{Configuration, Dependencies, NodeSecretKey, ContractAddress};
+	use super::{Configuration, Dependencies, NodeSecretKey, ContractAddress, Executor};
 
 	fn into_service_contract_address(address: ContractAddress) -> ethcore_secretstore::ContractAddress {
 		match address {
@@ -136,7 +137,7 @@ mod server {
 
 	impl KeyServer {
 		/// Create new key server
-		pub fn new(mut conf: Configuration, deps: Dependencies) -> Result<Self, String> {
+		pub fn new(mut conf: Configuration, deps: Dependencies, executor: Executor) -> Result<Self, String> {
 			let self_secret: Arc<ethcore_secretstore::NodeKeyPair> = match conf.self_secret.take() {
 				Some(NodeSecretKey::Plain(secret)) => Arc::new(ethcore_secretstore::PlainNodeKeyPair::new(
 					KeyPair::from_secret(secret).map_err(|e| format!("invalid secret: {}", e))?)),
@@ -179,7 +180,6 @@ mod server {
 				service_contract_doc_sretr_address: conf.service_contract_doc_sretr_address.map(into_service_contract_address),
 				acl_check_contract_address: conf.acl_check_contract_address.map(into_service_contract_address),
 				cluster_config: ethcore_secretstore::ClusterConfiguration {
-					threads: 4,
 					listener_address: ethcore_secretstore::NodeAddress {
 						address: conf.interface.clone(),
 						port: conf.port,
@@ -198,7 +198,7 @@ mod server {
 			cconf.cluster_config.nodes.insert(self_secret.public().clone(), cconf.cluster_config.listener_address.clone());
 
 			let db = db::open_secretstore_db(&conf.data_path)?;
-			let key_server = ethcore_secretstore::start(deps.client, deps.sync, deps.miner, self_secret, cconf, db)
+			let key_server = ethcore_secretstore::start(deps.client, deps.sync, deps.miner, self_secret, cconf, db, executor)
 				.map_err(|e| format!("Error starting KeyServer {}: {}", key_server_name, e))?;
 
 			Ok(KeyServer {
@@ -238,11 +238,11 @@ impl Default for Configuration {
 }
 
 /// Start secret store-related functionality
-pub fn start(conf: Configuration, deps: Dependencies) -> Result<Option<KeyServer>, String> {
+pub fn start(conf: Configuration, deps: Dependencies, executor: Executor) -> Result<Option<KeyServer>, String> {
 	if !conf.enabled {
 		return Ok(None);
 	}
 
-	KeyServer::new(conf, deps)
+	KeyServer::new(conf, deps, executor)
 		.map(|s| Some(s))
 }

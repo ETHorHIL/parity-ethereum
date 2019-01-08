@@ -1,33 +1,33 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Transaction Pool
 
 use ethereum_types::{U256, H256, Address};
 use heapsize::HeapSizeOf;
-use transaction;
+use types::transaction;
 use txpool;
 
 mod listener;
 mod queue;
 mod ready;
-mod scoring;
 
 pub mod client;
 pub mod local_transactions;
+pub mod scoring;
 pub mod verifier;
 
 #[cfg(test)]
@@ -84,7 +84,7 @@ impl PendingSettings {
 
 /// Transaction priority.
 #[derive(Debug, PartialEq, Eq, PartialOrd,  Clone, Copy)]
-pub(crate) enum Priority {
+pub enum Priority {
 	/// Regular transactions received over the network. (no priority boost)
 	Regular,
 	/// Transactions from retracted blocks (medium priority)
@@ -106,6 +106,18 @@ impl Priority {
 			_ => false,
 		}
 	}
+}
+
+/// Scoring properties for verified transaction.
+pub trait ScoredTransaction {
+	/// Gets transaction priority.
+	fn priority(&self) -> Priority;
+
+	/// Gets transaction gas price.
+	fn gas_price(&self) -> &U256;
+
+	/// Gets transaction nonce.
+	fn nonce(&self) -> U256;
 }
 
 /// Verified transaction stored in the pool.
@@ -135,11 +147,6 @@ impl VerifiedTransaction {
 			priority: Priority::Retracted,
 			insertion_id: 0,
 		}
-	}
-
-	/// Gets transaction priority.
-	pub(crate) fn priority(&self) -> Priority {
-		self.priority
 	}
 
 	/// Gets transaction insertion id.
@@ -173,5 +180,21 @@ impl txpool::VerifiedTransaction for VerifiedTransaction {
 
 	fn sender(&self) -> &Address {
 		&self.sender
+	}
+}
+
+impl ScoredTransaction for VerifiedTransaction {
+	fn priority(&self) -> Priority {
+		self.priority
+	}
+
+	/// Gets transaction gas price.
+	fn gas_price(&self) -> &U256 {
+		&self.transaction.gas_price
+	}
+
+	/// Gets transaction nonce.
+	fn nonce(&self) -> U256 {
+		self.transaction.nonce
 	}
 }

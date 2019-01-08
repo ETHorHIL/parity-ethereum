@@ -9,36 +9,34 @@ authors = ["Parity Technologies <admin@parity.io>"]
 
 [dependencies]
 common-types = { path = "../types" }
-parity-bytes = { git = "https://github.com/paritytech/parity-common" }
-ethcore-network = { path = "../../util/network" }
-ethcore-network-devp2p = { path = "../../util/network-devp2p" }
+env_logger = "0.5"
+ethcore = { path = ".." }
 ethcore-io = { path = "../../util/io" }
 ethcore-light = { path = "../light" }
-ethcore-transaction = { path = "../transaction" }
-ethcore = { path = ".." }
-ethereum-types = "0.3"
-hashdb = { git = "https://github.com/paritytech/parity-common" }
+ethcore-network = { path = "../../util/network" }
+ethcore-network-devp2p = { path = "../../util/network-devp2p" }
+ethereum-types = "0.4"
+ethstore = { path = "../../accounts/ethstore" }
 fastmap = { path = "../../util/fastmap" }
-rlp = { git = "https://github.com/paritytech/parity-common" }
-rustc-hex = "1.0"
-keccak-hash = { git = "https://github.com/paritytech/parity-common" }
-keccak-hasher = { path = "../../util/keccak-hasher" }
-triehash-ethereum = {version = "0.2", path = "../../util/triehash-ethereum" }
-kvdb = { git = "https://github.com/paritytech/parity-common" }
-macros = { path = "../../util/macros" }
-log = "0.4"
-env_logger = "0.5"
-rand = "0.4"
+hashdb = "0.3.0"
 heapsize = "0.4"
-semver = "0.9"
-smallvec = { version = "0.4", features = ["heapsizeof"] }
-parking_lot = "0.6"
-trace-time = { path = "../../util/trace-time" }
-ipnetwork = "0.12.6"
+keccak-hash = "0.1"
+keccak-hasher = { path = "../../util/keccak-hasher" }
+kvdb = "0.1"
+log = "0.4"
+macros = { path = "../../util/macros" }
+parity-bytes = "0.1"
+parking_lot = "0.7"
+rand = "0.4"
+rlp = { version = "0.3.0", features = ["ethereum"] }
+trace-time = "0.1"
+triehash-ethereum = {version = "0.2", path = "../../util/triehash-ethereum" }
 
 [dev-dependencies]
+env_logger = "0.5"
 ethcore-io = { path = "../../util/io", features = ["mio"] }
-ethkey = { path = "../../ethkey" }
-kvdb-memorydb = { git = "https://github.com/paritytech/parity-common" }
+ethkey = { path = "../../accounts/ethkey" }
+kvdb-memorydb = "0.1"
 ethcore-private-tx = { path = "../private-tx" }
 ethcore = { path = "..", features = ["test-helpers"] }
+rustc-hex = "1.0"

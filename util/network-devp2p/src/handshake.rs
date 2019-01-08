@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::time::Duration;
 use rand::random;
@@ -69,8 +69,6 @@ pub struct Handshake {
 	pub auth_cipher: Bytes,
 	/// A copy of received encrypted ack packet
 	pub ack_cipher: Bytes,
-	/// This Handshake is marked for deletion flag
-	pub expired: bool,
 }
 
 const V4_AUTH_PACKET_SIZE: usize = 307;
@@ -95,13 +93,7 @@ impl Handshake {
 			remote_version: PROTOCOL_VERSION,
 			auth_cipher: Bytes::new(),
 			ack_cipher: Bytes::new(),
-			expired: false,
 		})
-	}
-
-	/// Check if this handshake is expired.
-	pub fn expired(&self) -> bool {
-		self.expired
 	}
 
 	/// Start a handshake
@@ -125,28 +117,26 @@ impl Handshake {
 
 	/// Readable IO handler. Drives the state change.
 	pub fn readable<Message>(&mut self, io: &IoContext<Message>, host: &HostInfo) -> Result<(), Error> where Message: Send + Clone + Sync + 'static {
-		if !self.expired() {
-			while let Some(data) = self.connection.readable()? {
-				match self.state {
-					HandshakeState::New => {},
-					HandshakeState::StartSession => {},
-					HandshakeState::ReadingAuth => {
-						self.read_auth(io, host.secret(), &data)?;
-					},
-					HandshakeState::ReadingAuthEip8 => {
-						self.read_auth_eip8(io, host.secret(), &data)?;
-					},
-					HandshakeState::ReadingAck => {
-						self.read_ack(host.secret(), &data)?;
-					},
-					HandshakeState::ReadingAckEip8 => {
-						self.read_ack_eip8(host.secret(), &data)?;
-					},
-				}
-				if self.state == HandshakeState::StartSession {
-					io.clear_timer(self.connection.token).ok();
-					break;
-				}
+		while let Some(data) = self.connection.readable()? {
+			match self.state {
+				HandshakeState::New => {},
+				HandshakeState::StartSession => {},
+				HandshakeState::ReadingAuth => {
+					self.read_auth(io, host.secret(), &data)?;
+				},
+				HandshakeState::ReadingAuthEip8 => {
+					self.read_auth_eip8(io, host.secret(), &data)?;
+				},
+				HandshakeState::ReadingAck => {
+					self.read_ack(host.secret(), &data)?;
+				},
+				HandshakeState::ReadingAckEip8 => {
+					self.read_ack_eip8(host.secret(), &data)?;
+				},
+			}
+			if self.state == HandshakeState::StartSession {
+				io.clear_timer(self.connection.token).ok();
+				break;
 			}
 		}
 		Ok(())
@@ -154,9 +144,7 @@ impl Handshake {
 
 	/// Writable IO handler.
 	pub fn writable<Message>(&mut self, io: &IoContext<Message>) -> Result<(), Error> where Message: Send + Clone + Sync + 'static {
-		if !self.expired() {
-			self.connection.writable(io)?;
-		}
+		self.connection.writable(io)?;
 		Ok(())
 	}
 

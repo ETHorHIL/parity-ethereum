@@ -1,38 +1,39 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Light client implementation. Stores data from light sync
 
 use std::sync::{Weak, Arc};
 
-use ethcore::block_status::BlockStatus;
 use ethcore::client::{ClientReport, EnvInfo, ClientIoMessage};
 use ethcore::engines::{epoch, EthEngine, EpochChange, EpochTransition, Proof};
 use ethcore::machine::EthereumMachine;
-use ethcore::error::{Error, BlockImportError};
-use ethcore::ids::BlockId;
-use ethcore::header::{BlockNumber, Header};
+use ethcore::error::{Error, EthcoreResult};
 use ethcore::verification::queue::{self, HeaderQueue};
-use ethcore::blockchain_info::BlockChainInfo;
 use ethcore::spec::{Spec, SpecHardcodedSync};
-use ethcore::encoded;
 use io::IoChannel;
 use parking_lot::{Mutex, RwLock};
 use ethereum_types::{H256, U256};
 use futures::{IntoFuture, Future};
+use common_types::BlockNumber;
+use common_types::block_status::BlockStatus;
+use common_types::blockchain_info::BlockChainInfo;
+use common_types::encoded;
+use common_types::header::Header;
+use common_types::ids::BlockId;
 
 use kvdb::KeyValueDB;
 
@@ -85,7 +86,7 @@ pub trait LightChainClient: Send + Sync {
 
 	/// Queue header to be verified. Required that all headers queued have their
 	/// parent queued prior.
-	fn queue_header(&self, header: Header) -> Result<H256, BlockImportError>;
+	fn queue_header(&self, header: Header) -> EthcoreResult<H256>;
 
 	/// Attempt to get a block hash by block id.
 	fn block_hash(&self, id: BlockId) -> Option<H256>;
@@ -126,9 +127,6 @@ pub trait LightChainClient: Send + Sync {
 
 	/// Get the `i`th CHT root.
 	fn cht_root(&self, i: usize) -> Option<H256>;
-
-	/// Get the EIP-86 transition block number.
-	fn eip86_transition(&self) -> BlockNumber;
 
 	/// Get a report of import activity since the last call.
 	fn report(&self) -> ClientReport;
@@ -179,7 +177,7 @@ impl<T: ChainDataFetcher> Client<T> {
 		io_channel: IoChannel<ClientIoMessage>,
 		cache: Arc<Mutex<Cache>>
 	) -> Result<Self, Error> {
-		Ok(Client {
+		Ok(Self {
 			queue: HeaderQueue::new(config.queue, spec.engine.clone(), io_channel, config.check_seal),
 			engine: spec.engine.clone(),
 			chain: {
@@ -188,9 +186,9 @@ impl<T: ChainDataFetcher> Client<T> {
 			},
 			report: RwLock::new(ClientReport::default()),
 			import_lock: Mutex::new(()),
-			db: db,
+			db,
 			listeners: RwLock::new(vec![]),
-			fetcher: fetcher,
+			fetcher,
 			verify_full: config.verify_full,
 		})
 	}
@@ -209,8 +207,8 @@ impl<T: ChainDataFetcher> Client<T> {
 	}
 
 	/// Import a header to the queue for additional verification.
-	pub fn import_header(&self, header: Header) -> Result<H256, BlockImportError> {
-		self.queue.import(header).map_err(Into::into)
+	pub fn import_header(&self, header: Header) -> EthcoreResult<H256> {
+		self.queue.import(header).map_err(|(_, e)| e)
 	}
 
 	/// Inquire about the status of a given header.
@@ -232,7 +230,7 @@ impl<T: ChainDataFetcher> Client<T> {
 		BlockChainInfo {
 			total_difficulty: best_td,
 			pending_total_difficulty: best_td + self.queue.total_difficulty(),
-			genesis_hash: genesis_hash,
+			genesis_hash,
 			best_block_hash: best_hdr.hash(),
 			best_block_number: best_hdr.number(),
 			best_block_timestamp: best_hdr.timestamp(),
@@ -316,14 +314,14 @@ impl<T: ChainDataFetcher> Client<T> {
 					The node may not be able to synchronize further.", e);
 			}
 
-			let epoch_proof =  self.engine.is_epoch_end(
+			let epoch_proof = self.engine.is_epoch_end_light(
 				&verified_header,
 				&|h| self.chain.block_header(BlockId::Hash(h)).and_then(|hdr| hdr.decode().ok()),
 				&|h| self.chain.pending_transition(h),
 			);
 
 			let mut tx = self.db.transaction();
-			let pending = match self.chain.insert(&mut tx, verified_header, epoch_proof) {
+			let pending = match self.chain.insert(&mut tx, &verified_header, epoch_proof) {
 				Ok(pending) => {
 					good.push(hash);
 					self.report.write().blocks_imported += 1;
@@ -514,8 +512,8 @@ impl<T: ChainDataFetcher> Client<T> {
 		};
 
 		let mut batch = self.db.transaction();
-		self.chain.insert_pending_transition(&mut batch, header.hash(), epoch::PendingTransition {
-			proof: proof,
+		self.chain.insert_pending_transition(&mut batch, header.hash(), &epoch::PendingTransition {
+			proof,
 		});
 		self.db.write_buffered(batch);
 		Ok(())
@@ -529,7 +527,7 @@ impl<T: ChainDataFetcher> LightChainClient for Client<T> {
 
 	fn chain_info(&self) -> BlockChainInfo { Client::chain_info(self) }
 
-	fn queue_header(&self, header: Header) -> Result<H256, BlockImportError> {
+	fn queue_header(&self, header: Header) -> EthcoreResult<H256> {
 		self.import_header(header)
 	}
 
@@ -585,10 +583,6 @@ impl<T: ChainDataFetcher> LightChainClient for Client<T> {
 		Client::cht_root(self, i)
 	}
 
-	fn eip86_transition(&self) -> BlockNumber {
-		self.engine().params().eip86_transition
-	}
-
 	fn report(&self) -> ClientReport {
 		Client::report(self)
 	}
@@ -609,7 +603,7 @@ impl<T: ChainDataFetcher> ::ethcore::client::EngineClient for Client<T> {
 		self.chain.epoch_transition_for(parent_hash).map(|(hdr, proof)| EpochTransition {
 			block_hash: hdr.hash(),
 			block_number: hdr.number(),
-			proof: proof,
+			proof,
 		})
 	}
 

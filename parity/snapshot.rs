@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Snapshot and restoration commands.
 
@@ -22,13 +22,13 @@ use std::sync::Arc;
 
 use hash::keccak;
 use ethcore::account_provider::AccountProvider;
-use ethcore::snapshot::{Progress, RestorationStatus, SnapshotService as SS};
+use ethcore::snapshot::{Progress, RestorationStatus, SnapshotConfiguration, SnapshotService as SS};
 use ethcore::snapshot::io::{SnapshotReader, PackedReader, PackedWriter};
 use ethcore::snapshot::service::Service as SnapshotService;
 use ethcore::client::{Mode, DatabaseCompactionProfile, VMType};
 use ethcore::miner::Miner;
-use ethcore::ids::BlockId;
 use ethcore_service::ClientService;
+use types::ids::BlockId;
 
 use cache::CacheConfig;
 use params::{SpecType, Pruning, Switch, tracing_switch_to_bool, fatdb_switch_to_bool};
@@ -62,6 +62,8 @@ pub struct SnapshotCommand {
 	pub file_path: Option<String>,
 	pub kind: Kind,
 	pub block_at: BlockId,
+	pub max_round_blocks_to_import: usize,
+	pub snapshot_conf: SnapshotConfiguration,
 }
 
 // helper for reading chunks from arbitrary reader and feeding them into the
@@ -165,7 +167,7 @@ impl SnapshotCommand {
 		execute_upgrades(&self.dirs.base, &db_dirs, algorithm, &self.compaction)?;
 
 		// prepare client config
-		let client_config = to_client_config(
+		let mut client_config = to_client_config(
 			&self.cache_config,
 			spec.name.to_lowercase(),
 			Mode::Active,
@@ -178,7 +180,10 @@ impl SnapshotCommand {
 			self.pruning_history,
 			self.pruning_memory,
 			true,
+			self.max_round_blocks_to_import,
 		);
+
+		client_config.snapshot = self.snapshot_conf;
 
 		let restoration_db_handler = db::restoration_db_handler(&client_path, &client_config);
 		let client_db = restoration_db_handler.open(&client_path)

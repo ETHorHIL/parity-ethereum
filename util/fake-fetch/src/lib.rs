@@ -1,24 +1,24 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 extern crate fetch;
 extern crate hyper;
 extern crate futures;
 
-use hyper::StatusCode;
+use hyper::{StatusCode, Body};
 use futures::{future, future::FutureResult};
 use fetch::{Fetch, Url, Request};
 
@@ -39,10 +39,13 @@ impl<T: 'static> Fetch for FakeFetch<T> where T: Clone + Send+ Sync {
 	fn fetch(&self, request: Request, abort: fetch::Abort) -> Self::Result {
 		let u = request.url().clone();
 		future::ok(if self.val.is_some() {
-			let r = hyper::Response::new().with_body(&b"Some content"[..]);
+			let r = hyper::Response::new("Some content".into());
 			fetch::client::Response::new(u, r, abort)
 		} else {
-			fetch::client::Response::new(u, hyper::Response::new().with_status(StatusCode::NotFound), abort)
+			let r = hyper::Response::builder()
+				.status(StatusCode::NOT_FOUND)
+				.body(Body::empty()).expect("Nothing to parse, can not fail; qed");
+			fetch::client::Response::new(u, r, abort)
 		})
 	}
 

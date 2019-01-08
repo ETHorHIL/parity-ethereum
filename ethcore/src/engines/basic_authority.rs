@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! A blockchain engine that supports a basic, non-BFT proof-of-authority.
 
@@ -25,9 +25,9 @@ use block::*;
 use engines::{Engine, Seal, ConstructedVerifier, EngineError};
 use error::{BlockError, Error};
 use ethjson;
-use header::{Header, ExtendedHeader};
 use client::EngineClient;
 use machine::{AuxiliaryData, Call, EthereumMachine};
+use types::header::{Header, ExtendedHeader};
 use super::signer::EngineSigner;
 use super::validator_set::{ValidatorSet, SimpleList, new_validator_set};
 
@@ -110,7 +110,7 @@ impl Engine<EthereumMachine> for BasicAuthority {
 		if self.validators.contains(header.parent_hash(), author) {
 			// account should be pernamently unlocked, otherwise sealing will fail
 			if let Ok(signature) = self.sign(header.bare_hash()) {
-				return Seal::Regular(vec![::rlp::encode(&(&H520::from(signature) as &[u8])).into_vec()]);
+				return Seal::Regular(vec![::rlp::encode(&(&H520::from(signature) as &[u8]))]);
 			} else {
 				trace!(target: "basicauthority", "generate_seal: FAIL: accounts secret key unavailable");
 			}
@@ -150,6 +150,7 @@ impl Engine<EthereumMachine> for BasicAuthority {
 	fn is_epoch_end(
 		&self,
 		chain_head: &Header,
+		_finalized: &[H256],
 		_chain: &super::Headers<Header>,
 		_transition_store: &super::PendingTransitionStore,
 	) -> Option<Vec<u8>> {
@@ -157,6 +158,15 @@ impl Engine<EthereumMachine> for BasicAuthority {
 
 		// finality never occurs so only apply immediate transitions.
 		self.validators.is_epoch_end(first, chain_head)
+	}
+
+	fn is_epoch_end_light(
+		&self,
+		chain_head: &Header,
+		chain: &super::Headers<Header>,
+		transition_store: &super::PendingTransitionStore,
+	) -> Option<Vec<u8>> {
+		self.is_epoch_end(chain_head, &[], chain, transition_store)
 	}
 
 	fn epoch_verifier<'a>(&self, header: &Header, proof: &'a [u8]) -> ConstructedVerifier<'a, EthereumMachine> {
@@ -205,7 +215,7 @@ mod tests {
 	use block::*;
 	use test_helpers::get_temp_state_db;
 	use account_provider::AccountProvider;
-	use header::Header;
+	use types::header::Header;
 	use spec::Spec;
 	use engines::Seal;
 	use tempdir::TempDir;
@@ -234,7 +244,7 @@ mod tests {
 	fn can_do_signature_verification_fail() {
 		let engine = new_test_authority().engine;
 		let mut header: Header = Header::default();
-		header.set_seal(vec![::rlp::encode(&H520::default()).into_vec()]);
+		header.set_seal(vec![::rlp::encode(&H520::default())]);
 
 		let verify_result = engine.verify_block_external(&header);
 		assert!(verify_result.is_err());

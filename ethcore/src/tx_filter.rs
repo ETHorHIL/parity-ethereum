@@ -1,33 +1,34 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Smart contract based transaction filter.
 
 use ethereum_types::{H256, U256, Address};
 use lru_cache::LruCache;
+use ethabi::FunctionOutputDecoder;
 
 use client::{BlockInfo, CallContract, BlockId};
 use parking_lot::Mutex;
 use spec::CommonParams;
-use transaction::{Action, SignedTransaction};
+use types::transaction::{Action, SignedTransaction};
 use types::BlockNumber;
 use hash::KECCAK_EMPTY;
 
-use_contract!(transact_acl_deprecated, "TransactAclDeprecated", "res/contracts/tx_acl_deprecated.json");
-use_contract!(transact_acl, "TransactAcl", "res/contracts/tx_acl.json");
+use_contract!(transact_acl_deprecated, "res/contracts/tx_acl_deprecated.json");
+use_contract!(transact_acl, "res/contracts/tx_acl.json");
 
 const MAX_CACHE_SIZE: usize = 4096;
 
@@ -42,8 +43,6 @@ mod tx_permissions {
 
 /// Connection filter that uses a contract to manage permissions.
 pub struct TransactionFilter {
-	contract_deprecated: transact_acl_deprecated::TransactAclDeprecated,
-	contract: transact_acl::TransactAcl,
 	contract_address: Address,
 	transition_block: BlockNumber,
 	permission_cache: Mutex<LruCache<(H256, Address), u32>>,
@@ -55,8 +54,6 @@ impl TransactionFilter {
 	pub fn from_params(params: &CommonParams) -> Option<TransactionFilter> {
 		params.transaction_permission_contract.map(|address|
 			TransactionFilter {
-				contract_deprecated: transact_acl_deprecated::TransactAclDeprecated::default(),
-				contract: transact_acl::TransactAcl::default(),
 				contract_address: address,
 				transition_block: params.transaction_permission_contract_transition,
 				permission_cache: Mutex::new(LruCache::new(MAX_CACHE_SIZE)),
@@ -91,10 +88,8 @@ impl TransactionFilter {
 
 		let contract_address = self.contract_address;
 		let contract_version = contract_version_cache.get_mut(parent_hash).and_then(|v| *v).or_else(||  {
-			self.contract.functions()
-				.contract_version()
-				.call(&|data| client.call_contract(BlockId::Hash(*parent_hash), contract_address, data))
-				.ok()
+			let (data, decoder) = transact_acl::functions::contract_version::call();
+			decoder.decode(&client.call_contract(BlockId::Hash(*parent_hash), contract_address, data).ok()?).ok()
 		});
 		contract_version_cache.insert(*parent_hash, contract_version);
 
@@ -104,14 +99,16 @@ impl TransactionFilter {
 				let version_u64 = version.low_u64();
 				trace!(target: "tx_filter", "Version of tx permission contract: {}", version);
 				match version_u64 {
-					2 => self.contract.functions()
-						.allowed_tx_types()
-						.call(sender, to, value, &|data| client.call_contract(BlockId::Hash(*parent_hash), contract_address, data))
-						.map(|(p, f)| (p.low_u32(), f))
-						.unwrap_or_else(|e| {
-							error!(target: "tx_filter", "Error calling tx permissions contract: {:?}", e);
-							(tx_permissions::NONE, true)
-						}),
+					2 => {
+						let (data, decoder) = transact_acl::functions::allowed_tx_types::call(sender, to, value);
+						client.call_contract(BlockId::Hash(*parent_hash), contract_address, data)
+							.and_then(|value| decoder.decode(&value).map_err(|e| e.to_string()))
+							.map(|(p, f)| (p.low_u32(), f))
+							.unwrap_or_else(|e| {
+								error!(target: "tx_filter", "Error calling tx permissions contract: {:?}", e);
+								(tx_permissions::NONE, true)
+							})
+					},
 					_ => {
 						error!(target: "tx_filter", "Unknown version of tx permissions contract is used");
 						(tx_permissions::NONE, true)
@@ -120,14 +117,14 @@ impl TransactionFilter {
 			},
 			None => {
 				trace!(target: "tx_filter", "Fallback to the deprecated version of tx permission contract");
-				(self.contract_deprecated.functions()
-					 .allowed_tx_types()
-					 .call(sender, &|data| client.call_contract(BlockId::Hash(*parent_hash), contract_address, data))
-					 .map(|p| p.low_u32())
-					 .unwrap_or_else(|e| {
-						 error!(target: "tx_filter", "Error calling tx permissions contract: {:?}", e);
-						 tx_permissions::NONE
-					 }), true)
+				let (data, decoder) = transact_acl_deprecated::functions::allowed_tx_types::call(sender);
+				(client.call_contract(BlockId::Hash(*parent_hash), contract_address, data)
+					.and_then(|value| decoder.decode(&value).map_err(|e| e.to_string()))
+					.map(|p| p.low_u32())
+					.unwrap_or_else(|e| {
+						error!(target: "tx_filter", "Error calling tx permissions contract: {:?}", e);
+						tx_permissions::NONE
+					}), true)
 			}
 		};
 
@@ -152,7 +149,7 @@ mod test {
 	use io::IoChannel;
 	use ethkey::{Secret, KeyPair};
 	use super::TransactionFilter;
-	use transaction::{Transaction, Action};
+	use types::transaction::{Transaction, Action};
 	use tempdir::TempDir;
 	use test_helpers;
 

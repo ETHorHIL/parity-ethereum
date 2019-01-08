@@ -1,40 +1,43 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use parking_lot::Mutex;
+use ethereum_types::H256;
 
 /// Trait which should be implemented by a private transaction handler.
 pub trait PrivateTxHandler: Send + Sync + 'static {
 	/// Function called on new private transaction received.
-	fn import_private_transaction(&self, rlp: &[u8]) -> Result<(), String>;
+	/// Returns the hash of the imported transaction
+	fn import_private_transaction(&self, rlp: &[u8]) -> Result<H256, String>;
 
 	/// Function called on new signed private transaction received.
-	fn import_signed_private_transaction(&self, rlp: &[u8]) -> Result<(), String>;
+	/// Returns the hash of the imported transaction
+	fn import_signed_private_transaction(&self, rlp: &[u8]) -> Result<H256, String>;
 }
 
 /// Nonoperative private transaction handler.
 pub struct NoopPrivateTxHandler;
 
 impl PrivateTxHandler for NoopPrivateTxHandler {
-	fn import_private_transaction(&self, _rlp: &[u8]) -> Result<(), String> {
-		Ok(())
+	fn import_private_transaction(&self, _rlp: &[u8]) -> Result<H256, String> {
+		Ok(H256::default())
 	}
 
-	fn import_signed_private_transaction(&self, _rlp: &[u8]) -> Result<(), String> {
-		Ok(())
+	fn import_signed_private_transaction(&self, _rlp: &[u8]) -> Result<H256, String> {
+		Ok(H256::default())
 	}
 }
 
@@ -48,13 +51,13 @@ pub struct SimplePrivateTxHandler {
 }
 
 impl PrivateTxHandler for SimplePrivateTxHandler {
-	fn import_private_transaction(&self, rlp: &[u8]) -> Result<(), String> {
+	fn import_private_transaction(&self, rlp: &[u8]) -> Result<H256, String> {
 		self.txs.lock().push(rlp.to_vec());
-		Ok(())
+		Ok(H256::default())
 	}
 
-	fn import_signed_private_transaction(&self, rlp: &[u8]) -> Result<(), String> {
+	fn import_signed_private_transaction(&self, rlp: &[u8]) -> Result<H256, String> {
 		self.signed_txs.lock().push(rlp.to_vec());
-		Ok(())
+		Ok(H256::default())
 	}
 }

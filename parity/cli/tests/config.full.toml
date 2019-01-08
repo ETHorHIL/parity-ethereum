@@ -64,6 +64,7 @@ interface = "local"
 cors = ["null"]
 apis = ["web3", "eth", "net", "parity", "traces", "rpc", "secretstore"]
 hosts = ["none"]
+allow_missing_blocks = false
 
 [websockets]
 disable = false
@@ -125,13 +126,13 @@ min_gas_price = 0
 usd_per_tx = "0.0001"
 usd_per_eth = "auto"
 price_update_period = "hourly"
-gas_floor_target = "4700000"
-gas_cap = "6283184"
+gas_floor_target = "8000000"
+gas_cap = "10000000"
 tx_queue_size = 8192
 tx_queue_strategy = "gas_factor"
 tx_queue_ban_count = 1
 tx_queue_ban_time = 180 #s
-tx_gas_limit = "6283184"
+tx_gas_limit = "10000000"
 tx_time_limit = 100 #ms
 tx_queue_no_unfamiliar_locals = false
 tx_queue_no_early_reject = false
@@ -154,6 +155,13 @@ db_compaction = "ssd"
 fat_db = "auto"
 scale_verifiers = true
 num_verifiers = 6
+
+[light]
+on_demand_response_time_window = 2
+on_demand_request_backoff_start = 9
+on_demand_request_backoff_max = 15
+on_demand_request_backoff_rounds_max = 100
+on_demand_request_consecutive_failures = 1
 
 [snapshots]
 disable_periodic = false

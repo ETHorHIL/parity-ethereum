@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -20,7 +20,7 @@ use byteorder::{LittleEndian, ByteOrder};
 use ethereum_types::{H256, U256, Address};
 
 use super::WasmInterpreter;
-use vm::{self, Vm, GasLeft, ActionParams, ActionValue, CreateContractAddress};
+use vm::{self, Exec, GasLeft, ActionParams, ActionValue, CreateContractAddress};
 use vm::tests::{FakeCall, FakeExt, FakeCallType};
 
 macro_rules! load_sample {
@@ -35,7 +35,7 @@ macro_rules! reqrep_test {
 	};
 	($name: expr, $input: expr, $info: expr, $block_hashes: expr) => {
 		{
-			::ethcore_logger::init_log();
+			let _ = ::env_logger::try_init();
 			let code = load_sample!($name);
 
 			let mut params = ActionParams::default();
@@ -48,7 +48,7 @@ macro_rules! reqrep_test {
 			fake_ext.blockhashes = $block_hashes;
 
 			let mut interpreter = wasm_interpreter(params);
-			interpreter.exec(&mut fake_ext)
+			interpreter.exec(&mut fake_ext).ok().unwrap()
 				.map(|result| match result {
 					GasLeft::Known(_) => { panic!("Test is expected to return payload to check"); },
 					GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -65,8 +65,8 @@ fn test_finalize(res: Result<GasLeft, vm::Error>) -> Result<U256, vm::Error> {
 	}
 }
 
-fn wasm_interpreter(params: ActionParams) -> WasmInterpreter {
-	WasmInterpreter::new(params)
+fn wasm_interpreter(params: ActionParams) -> Box<WasmInterpreter> {
+	Box::new(WasmInterpreter::new(params))
 }
 
 /// Empty contract does almost nothing except producing 1 (one) local node debug log message
@@ -83,7 +83,7 @@ fn empty() {
 
 	let gas_left = {
 		let mut interpreter = wasm_interpreter(params);
-		test_finalize(interpreter.exec(&mut ext)).unwrap()
+		test_finalize(interpreter.exec(&mut ext).ok().unwrap()).unwrap()
 	};
 
 	assert_eq!(gas_left, U256::from(96_926));
@@ -94,7 +94,7 @@ fn empty() {
 //   logger.wasm writes all these provided fixed header fields to some arbitrary storage keys.
 #[test]
 fn logger() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let code = load_sample!("logger.wasm");
 	let address: Address = "0f572e5295c57f15886f9b263e2f6d2d6c7b5ec6".parse().unwrap();
@@ -112,7 +112,7 @@ fn logger() {
 
 	let gas_left = {
 		let mut interpreter = wasm_interpreter(params);
-		test_finalize(interpreter.exec(&mut ext)).unwrap()
+		test_finalize(interpreter.exec(&mut ext).ok().unwrap()).unwrap()
 	};
 
 	let address_val: H256 = address.into();
@@ -148,7 +148,7 @@ fn logger() {
 //      if it has any result.
 #[test]
 fn identity() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let code = load_sample!("identity.wasm");
 	let sender: Address = "01030507090b0d0f11131517191b1d1f21232527".parse().unwrap();
@@ -161,7 +161,7 @@ fn identity() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(_) => { panic!("Identity contract should return payload"); },
 			GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -182,7 +182,7 @@ fn identity() {
 // This also tests byte-perfect memory allocation and in/out ptr lifecycle.
 #[test]
 fn dispersion() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let code = load_sample!("dispersion.wasm");
 
@@ -196,7 +196,7 @@ fn dispersion() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(_) => { panic!("Dispersion routine should return payload"); },
 			GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -224,7 +224,7 @@ fn suicide_not() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(_) => { panic!("Suicidal contract should return payload when had not actualy killed himself"); },
 			GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -240,7 +240,7 @@ fn suicide_not() {
 
 #[test]
 fn suicide() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let code = load_sample!("suicidal.wasm");
 
@@ -257,7 +257,7 @@ fn suicide() {
 
 	let gas_left = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(gas) => gas,
 			GasLeft::NeedsReturn { .. } => {
@@ -272,7 +272,7 @@ fn suicide() {
 
 #[test]
 fn create() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let mut params = ActionParams::default();
 	params.gas = U256::from(100_000);
@@ -285,7 +285,7 @@ fn create() {
 
 	let gas_left = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(_) => {
 				panic!("Create contract always return 40 bytes of the creation address, or in the case where it fails, return 40 bytes of zero.");
@@ -328,7 +328,7 @@ fn create() {
 
 #[test]
 fn call_msg() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let sender: Address = "01030507090b0d0f11131517191b1d1f21232527".parse().unwrap();
 	let receiver: Address = "0f572e5295c57f15886f9b263e2f6d2d6c7b5ec6".parse().unwrap();
@@ -347,7 +347,7 @@ fn call_msg() {
 
 	let gas_left = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(gas_left) => gas_left,
 			GasLeft::NeedsReturn { .. } => { panic!("Call test should not return payload"); },
@@ -375,7 +375,7 @@ fn call_msg() {
 // value as `gas` argument to the inner pwasm_ethereum::call
 #[test]
 fn call_msg_gasleft() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let sender: Address = "01030507090b0d0f11131517191b1d1f21232527".parse().unwrap();
 	let receiver: Address = "0f572e5295c57f15886f9b263e2f6d2d6c7b5ec6".parse().unwrap();
@@ -395,7 +395,7 @@ fn call_msg_gasleft() {
 
 	let gas_left = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(gas_left) => gas_left,
 			GasLeft::NeedsReturn { .. } => { panic!("Call test should not return payload"); },
@@ -421,7 +421,7 @@ fn call_msg_gasleft() {
 
 #[test]
 fn call_code() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let sender: Address = "01030507090b0d0f11131517191b1d1f21232527".parse().unwrap();
 	let receiver: Address = "0f572e5295c57f15886f9b263e2f6d2d6c7b5ec6".parse().unwrap();
@@ -438,7 +438,7 @@ fn call_code() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(_) => { panic!("Call test should return payload"); },
 			GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -467,7 +467,7 @@ fn call_code() {
 
 #[test]
 fn call_static() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let sender: Address = "0f572e5295c57f15886f9b263e2f6d2d6c7b5ec6".parse().unwrap();
 	let receiver: Address = "01030507090b0d0f11131517191b1d1f21232527".parse().unwrap();
@@ -486,7 +486,7 @@ fn call_static() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(_) => { panic!("Static call test should return payload"); },
 			GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -527,7 +527,7 @@ fn realloc() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 				GasLeft::Known(_) => { panic!("Realloc should return payload"); },
 				GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -549,7 +549,7 @@ fn alloc() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 				GasLeft::Known(_) => { panic!("alloc test should return payload"); },
 				GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -563,7 +563,7 @@ fn alloc() {
 // Test prepopulates address into storage, than executes a contract which read that address from storage and write this address into result
 #[test]
 fn storage_read() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let code = load_sample!("storage_read.wasm");
 	let address: Address = "0f572e5295c57f15886f9b263e2f6d2d6c7b5ec6".parse().unwrap();
@@ -576,7 +576,7 @@ fn storage_read() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 				GasLeft::Known(_) => { panic!("storage_read should return payload"); },
 				GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -591,7 +591,7 @@ fn storage_read() {
 // keccak.wasm runs wasm-std::keccak function on data param and returns hash
 #[test]
 fn keccak() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 	let code = load_sample!("keccak.wasm");
 
 	let mut params = ActionParams::default();
@@ -602,7 +602,7 @@ fn keccak() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 				GasLeft::Known(_) => { panic!("keccak should return payload"); },
 				GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -730,7 +730,7 @@ fn math_div() {
 
 #[test]
 fn storage_metering() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	// #1
 	let mut ext = FakeExt::new().with_wasm();
@@ -749,7 +749,7 @@ fn storage_metering() {
 
 	let gas_left = {
 		let mut interpreter = wasm_interpreter(params);
-		test_finalize(interpreter.exec(&mut ext)).unwrap()
+		test_finalize(interpreter.exec(&mut ext).ok().unwrap()).unwrap()
 	};
 
 	// 0 -> not 0
@@ -768,7 +768,7 @@ fn storage_metering() {
 
 	let gas_left = {
 		let mut interpreter = wasm_interpreter(params);
-		test_finalize(interpreter.exec(&mut ext)).unwrap()
+		test_finalize(interpreter.exec(&mut ext).ok().unwrap()).unwrap()
 	};
 
 	// not 0 -> not 0
@@ -866,7 +866,7 @@ fn externs() {
 // This test checks the ability of wasm contract to invoke gasleft
 #[test]
 fn gasleft() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let mut params = ActionParams::default();
 	params.gas = U256::from(100_000);
@@ -875,8 +875,8 @@ fn gasleft() {
 	let mut ext = FakeExt::new().with_wasm();
 	ext.schedule.wasm.as_mut().unwrap().have_gasleft = true;
 
-	let mut interpreter = wasm_interpreter(params);
-	let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+	let interpreter = wasm_interpreter(params);
+	let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 	match result {
 		GasLeft::Known(_) => {},
 		GasLeft::NeedsReturn { gas_left, data, .. } => {
@@ -891,14 +891,14 @@ fn gasleft() {
 // ext.schedule.wasm.as_mut().unwrap().have_gasleft = false;
 #[test]
 fn gasleft_fail() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 
 	let mut params = ActionParams::default();
 	params.gas = U256::from(100_000);
 	params.code = Some(Arc::new(load_sample!("gasleft.wasm")));
 	let mut ext = FakeExt::new().with_wasm();
-	let mut interpreter = wasm_interpreter(params);
-	match interpreter.exec(&mut ext) {
+	let interpreter = wasm_interpreter(params);
+	match interpreter.exec(&mut ext).ok().unwrap() {
 		Err(_) => {},
 		Ok(_) => panic!("interpreter.exec should return Err if ext.schedule.wasm.have_gasleft = false")
 	}
@@ -906,7 +906,7 @@ fn gasleft_fail() {
 
 #[test]
 fn embedded_keccak() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 	let mut code = load_sample!("keccak.wasm");
 	code.extend_from_slice(b"something");
 
@@ -919,7 +919,7 @@ fn embedded_keccak() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(_) => { panic!("keccak should return payload"); },
 			GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -935,7 +935,7 @@ fn embedded_keccak() {
 /// and reversed input as a data
 #[test]
 fn events() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 	let code = load_sample!("events.wasm");
 
 	let mut params = ActionParams::default();
@@ -947,7 +947,7 @@ fn events() {
 
 	let (gas_left, result) = {
 		let mut interpreter = wasm_interpreter(params);
-		let result = interpreter.exec(&mut ext).expect("Interpreter to execute without any errors");
+		let result = interpreter.exec(&mut ext).ok().unwrap().expect("Interpreter to execute without any errors");
 		match result {
 			GasLeft::Known(_) => { panic!("events should return payload"); },
 			GasLeft::NeedsReturn { gas_left: gas, data: result, apply_state: _apply } => (gas, result.to_vec()),
@@ -967,7 +967,7 @@ fn events() {
 
 #[test]
 fn recursive() {
-	::ethcore_logger::init_log();
+	let _ = ::env_logger::try_init();
 	let code = load_sample!("recursive.wasm");
 
 	let mut params = ActionParams::default();
@@ -986,8 +986,8 @@ fn recursive() {
 
 	let mut ext = FakeExt::new().with_wasm();
 
-	let mut interpreter = wasm_interpreter(params);
-	let result = interpreter.exec(&mut ext);
+	let interpreter = wasm_interpreter(params);
+	let result = interpreter.exec(&mut ext).ok().unwrap();
 
 	// We expect that stack overflow will occur and it should be generated by
 	// deterministic stack metering. Exceeding deterministic stack height limit

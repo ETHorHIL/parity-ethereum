@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
 use hash::keccak;
@@ -21,14 +21,15 @@ use ethcore::client::{BlockChainClient, BlockId, ClientIoMessage};
 use ethcore::spec::Spec;
 use ethcore::miner::MinerService;
 use ethcore::CreateContractAddress;
-use transaction::{Transaction, Action};
+use types::transaction::{Transaction, Action};
 use ethcore::executive::{contract_address};
 use ethcore::test_helpers::{push_block_with_transactions};
-use ethcore_private_tx::{Provider, ProviderConfig, NoopEncryptor, Importer};
+use ethcore_private_tx::{Provider, ProviderConfig, NoopEncryptor, Importer, SignedPrivateTransaction};
 use ethcore::account_provider::AccountProvider;
 use ethkey::{KeyPair};
 use tests::helpers::{TestNet, TestIoHandler};
 use rustc_hex::FromHex;
+use rlp::Rlp;
 use SyncConfig;
 
 fn seal_spec() -> Spec {
@@ -144,6 +145,8 @@ fn send_private_transaction() {
 	//process signed response
 	let signed_private_transaction = received_signed_private_transactions[0].clone();
 	assert!(pm0.import_signed_private_transaction(&signed_private_transaction).is_ok());
+	let signature: SignedPrivateTransaction = Rlp::new(&signed_private_transaction).as_val().unwrap();
+	assert!(pm0.process_signature(&signature).is_ok());
 	let local_transactions = net.peer(0).miner.local_transactions();
 	assert_eq!(local_transactions.len(), 1);
 }

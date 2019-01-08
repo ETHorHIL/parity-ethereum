@@ -1,33 +1,49 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use engines::{Engine, Seal};
 use parity_machine::{Machine, Transactions, TotalScoredHeader};
 
+/// `InstantSeal` params.
+#[derive(Default, Debug, PartialEq)]
+pub struct InstantSealParams {
+	/// Whether to use millisecond timestamp
+	pub millisecond_timestamp: bool,
+}
+
+impl From<::ethjson::spec::InstantSealParams> for InstantSealParams {
+	fn from(p: ::ethjson::spec::InstantSealParams) -> Self {
+		InstantSealParams {
+			millisecond_timestamp: p.millisecond_timestamp,
+		}
+	}
+}
+
 /// An engine which does not provide any consensus mechanism, just seals blocks internally.
 /// Only seals blocks which have transactions.
 pub struct InstantSeal<M> {
+	params: InstantSealParams,
 	machine: M,
 }
 
 impl<M> InstantSeal<M> {
 	/// Returns new instance of InstantSeal over the given state machine.
-	pub fn new(machine: M) -> Self {
+	pub fn new(params: InstantSealParams, machine: M) -> Self {
 		InstantSeal {
-			machine: machine,
+			params, machine,
 		}
 	}
 }
@@ -56,8 +72,12 @@ impl<M: Machine> Engine<M> for InstantSeal<M>
 	fn open_block_header_timestamp(&self, parent_timestamp: u64) -> u64 {
 		use std::{time, cmp};
 
-		let now = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap_or_default();
-		cmp::max(now.as_secs(), parent_timestamp)
+		let dur = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap_or_default();
+		let mut now = dur.as_secs();
+		if self.params.millisecond_timestamp {
+			now = now * 1000 + dur.subsec_millis() as u64;
+		}
+		cmp::max(now, parent_timestamp)
 	}
 
 	fn is_timestamp_valid(&self, header_timestamp: u64, parent_timestamp: u64) -> bool {
@@ -75,7 +95,7 @@ mod tests {
 	use ethereum_types::{H520, Address};
 	use test_helpers::get_temp_state_db;
 	use spec::Spec;
-	use header::Header;
+	use types::header::Header;
 	use block::*;
 	use engines::Seal;
 
@@ -100,7 +120,7 @@ mod tests {
 
 		assert!(engine.verify_block_basic(&header).is_ok());
 
-		header.set_seal(vec![::rlp::encode(&H520::default()).into_vec()]);
+		header.set_seal(vec![::rlp::encode(&H520::default())]);
 
 		assert!(engine.verify_block_unordered(&header).is_ok());
 	}

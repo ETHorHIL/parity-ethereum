@@ -1,22 +1,22 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use fixture::{Fixture, Assert, CallLocator, Source};
 use wasm::WasmInterpreter;
-use vm::{self, Vm, GasLeft, ActionParams, ActionValue, ParamsType};
+use vm::{self, Exec, GasLeft, ActionParams, ActionValue, ParamsType};
 use vm::tests::FakeExt;
 use std::io::{self, Read};
 use std::{fs, path, fmt};
@@ -31,8 +31,8 @@ fn load_code<P: AsRef<path::Path>>(p: P) -> io::Result<Vec<u8>> {
 	Ok(result)
 }
 
-fn wasm_interpreter(params: ActionParams) -> WasmInterpreter {
-	WasmInterpreter::new(params)
+fn wasm_interpreter(params: ActionParams) -> Box<WasmInterpreter> {
+	Box::new(WasmInterpreter::new(params))
 }
 
 #[derive(Debug)]
@@ -66,7 +66,7 @@ impl Fail {
 }
 
 impl fmt::Display for Fail {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		use self::Fail::*;
 		match *self {
 			Return { ref expected, ref actual } =>
@@ -131,7 +131,7 @@ pub fn construct(
 	params.params_type = ParamsType::Separate;
 
 	Ok(
-		match wasm_interpreter(params).exec(ext)? {
+		match wasm_interpreter(params).exec(ext).ok().expect("Wasm interpreter always calls with trap=false; trap never happens; qed")? {
 			GasLeft::Known(_) => Vec::new(),
 			GasLeft::NeedsReturn { data, .. } => data.to_vec(),
 		}
@@ -192,9 +192,9 @@ pub fn run_fixture(fixture: &Fixture) -> Vec<Fail> {
 		}
 	}
 
-	let mut interpreter = wasm_interpreter(params);
+	let interpreter = wasm_interpreter(params);
 
-	let interpreter_return = match interpreter.exec(&mut ext) {
+	let interpreter_return = match interpreter.exec(&mut ext).ok().expect("Wasm interpreter always calls with trap=false; trap never happens; qed") {
 		Ok(ret) => ret,
 		Err(e) => { return Fail::runtime(e); }
 	};

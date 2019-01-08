@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Header download state machine.
 
@@ -20,8 +20,8 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt;
 
-use ethcore::encoded;
-use ethcore::header::Header;
+use types::encoded;
+use types::header::Header;
 
 use light::net::ReqId;
 use light::request::CompleteHeadersRequest as HeadersRequest;
@@ -183,7 +183,7 @@ impl Fetcher {
 
 		let headers = ctx.data();
 
-		if headers.len() == 0 {
+		if headers.is_empty() {
 			trace!(target: "sync", "Punishing peer {} for empty response", ctx.responder());
 			ctx.punish_responder();
 
@@ -204,20 +204,19 @@ impl Fetcher {
 			Ok(headers) => {
 				let mut parent_hash = None;
 				for header in headers {
-					if parent_hash.as_ref().map_or(false, |h| h != &header.hash()) {
-						trace!(target: "sync", "Punishing peer {} for parent mismatch", ctx.responder());
-						ctx.punish_responder();
-
-						self.requests.push(request);
-						return SyncRound::Fetch(self);
+					if let Some(hash) = parent_hash.as_ref() {
+						if *hash != header.hash() {
+							trace!(target: "sync", "Punishing peer {} for parent mismatch", ctx.responder());
+							ctx.punish_responder();
+							self.requests.push(request);
+							return SyncRound::Fetch(self);
+						}
 					}
-
 					// incrementally update the frame request as we go so we can
 					// return at any time in the loop.
-					parent_hash = Some(header.parent_hash().clone());
+					parent_hash = Some(*header.parent_hash());
 					request.headers_request.start = header.parent_hash().clone().into();
 					request.headers_request.max -= 1;
-
 					request.downloaded.push_front(header);
 				}
 
@@ -379,7 +378,7 @@ impl RoundStart {
 
 		match response::verify(ctx.data(), &req) {
 			Ok(headers) => {
-				if self.sparse_headers.len() == 0
+				if self.sparse_headers.is_empty()
 					&& headers.get(0).map_or(false, |x| x.parent_hash() != &self.start_block.1) {
 					trace!(target: "sync", "Wrong parent for first header in round");
 					ctx.punish_responder(); // or should we reset?

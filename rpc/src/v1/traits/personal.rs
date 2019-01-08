@@ -1,23 +1,24 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Personal rpc interface.
+use eip_712::EIP712;
+use jsonrpc_core::types::Value;
 use jsonrpc_core::{BoxFuture, Result};
-
-use v1::types::{Bytes, U128, H160, H256, H520, TransactionRequest, RichRawTransaction as RpcRichRawTransaction};
+use v1::types::{Bytes, U128, H160, H256, H520, TransactionRequest, RichRawTransaction as RpcRichRawTransaction, EIP191Version};
 
 build_rpc_trait! {
 	/// Personal rpc interface. Safe (read-only) functions.
@@ -41,6 +42,15 @@ build_rpc_trait! {
 		/// the request.
 		#[rpc(name = "personal_sign")]
 		fn sign(&self, Bytes, H160, String) -> BoxFuture<H520>;
+
+		/// Produces an EIP-712 compliant signature with given account using the given password to unlock the
+		/// account during the request.
+		#[rpc(name = "personal_signTypedData")]
+		fn sign_typed_data(&self, EIP712, H160, String) -> BoxFuture<H520>;
+
+		/// Signs an arbitrary message based on the version specified
+		#[rpc(name = "personal_sign191")]
+		fn sign_191(&self, EIP191Version, Value, H160, String) -> BoxFuture<H520>;
 
 		/// Returns the account associated with the private key that was used to calculate the signature in
 		/// `personal_sign`.

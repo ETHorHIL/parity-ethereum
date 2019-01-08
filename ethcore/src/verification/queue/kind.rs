@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Definition of valid items for the verification queue.
 
@@ -58,7 +58,7 @@ pub trait Kind: 'static + Sized + Send + Sync {
 	type Verified: Sized + Send + BlockLike + HeapSizeOf;
 
 	/// Attempt to create the `Unverified` item from the input.
-	fn create(input: Self::Input, engine: &EthEngine) -> Result<Self::Unverified, Error>;
+	fn create(input: Self::Input, engine: &EthEngine, check_seal: bool) -> Result<Self::Unverified, (Self::Input, Error)>;
 
 	/// Attempt to verify the `Unverified` item using the given engine.
 	fn verify(unverified: Self::Unverified, engine: &EthEngine, check_seal: bool) -> Result<Self::Verified, Error>;
@@ -70,9 +70,9 @@ pub mod blocks {
 
 	use engines::EthEngine;
 	use error::{Error, ErrorKind, BlockError};
-	use header::Header;
+	use types::header::Header;
 	use verification::{PreverifiedBlock, verify_block_basic, verify_block_unordered};
-	use transaction::UnverifiedTransaction;
+	use types::transaction::UnverifiedTransaction;
 
 	use heapsize::HeapSizeOf;
 	use ethereum_types::{H256, U256};
@@ -86,16 +86,16 @@ pub mod blocks {
 		type Unverified = Unverified;
 		type Verified = PreverifiedBlock;
 
-		fn create(input: Self::Input, engine: &EthEngine) -> Result<Self::Unverified, Error> {
-			match verify_block_basic(&input, engine) {
+		fn create(input: Self::Input, engine: &EthEngine, check_seal: bool) -> Result<Self::Unverified, (Self::Input, Error)> {
+			match verify_block_basic(&input, engine, check_seal) {
 				Ok(()) => Ok(input),
 				Err(Error(ErrorKind::Block(BlockError::TemporarilyInvalid(oob)), _)) => {
 					debug!(target: "client", "Block received too early {}: {:?}", input.hash(), oob);
-					Err(BlockError::TemporarilyInvalid(oob).into())
+					Err((input, BlockError::TemporarilyInvalid(oob).into()))
 				},
 				Err(e) => {
 					warn!(target: "client", "Stage 1 block verification failed for {}: {:?}", input.hash(), e);
-					Err(e)
+					Err((input, e))
 				}
 			}
 		}
@@ -190,7 +190,7 @@ pub mod headers {
 
 	use engines::EthEngine;
 	use error::Error;
-	use header::Header;
+	use types::header::Header;
 	use verification::verify_header_params;
 
 	use ethereum_types::{H256, U256};
@@ -209,8 +209,11 @@ pub mod headers {
 		type Unverified = Header;
 		type Verified = Header;
 
-		fn create(input: Self::Input, engine: &EthEngine) -> Result<Self::Unverified, Error> {
-			verify_header_params(&input, engine, true).map(|_| input)
+		fn create(input: Self::Input, engine: &EthEngine, check_seal: bool) -> Result<Self::Unverified, (Self::Input, Error)> {
+			match verify_header_params(&input, engine, true, check_seal) {
+				Ok(_) => Ok(input),
+				Err(err) => Err((input, err))
+			}
 		}
 
 		fn verify(unverified: Self::Unverified, engine: &EthEngine, check_seal: bool) -> Result<Self::Verified, Error> {

@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! `JournalDB` over in-memory overlay
 
@@ -26,7 +26,7 @@ use ethereum_types::H256;
 use hashdb::*;
 use heapsize::HeapSizeOf;
 use keccak_hasher::KeccakHasher;
-use kvdb::{KeyValueDB, DBTransaction};
+use kvdb::{KeyValueDB, DBTransaction, DBValue};
 use memorydb::*;
 use parking_lot::RwLock;
 use fastmap::H256FastMap;
@@ -66,7 +66,7 @@ use util::DatabaseKey;
 /// 7. Delete ancient record from memory and disk.
 
 pub struct OverlayRecentDB {
-	transaction_overlay: MemoryDB<KeccakHasher>,
+	transaction_overlay: MemoryDB<KeccakHasher, DBValue>,
 	backing: Arc<KeyValueDB>,
 	journal_overlay: Arc<RwLock<JournalOverlay>>,
 	column: Option<u32>,
@@ -120,7 +120,7 @@ impl<'a> Encodable for DatabaseValueRef<'a> {
 
 #[derive(PartialEq)]
 struct JournalOverlay {
-	backing_overlay: MemoryDB<KeccakHasher>, // Nodes added in the history period
+	backing_overlay: MemoryDB<KeccakHasher, DBValue>, // Nodes added in the history period
 	pending_overlay: H256FastMap<DBValue>, // Nodes being transfered from backing_overlay to backing db
 	journal: HashMap<u64, Vec<JournalEntry>>,
 	latest_era: Option<u64>,
@@ -323,10 +323,10 @@ impl JournalDB for OverlayRecentDB {
 			index,
 		};
 
-		batch.put_vec(self.column, &encode(&db_key), encoded_value.into_vec());
+		batch.put_vec(self.column, &encode(&db_key), encoded_value.to_vec());
 		if journal_overlay.latest_era.map_or(true, |e| now > e) {
 			trace!(target: "journaldb", "Set latest era to {}", now);
-			batch.put_vec(self.column, &LATEST_ERA_KEY, encode(&now).into_vec());
+			batch.put_vec(self.column, &LATEST_ERA_KEY, encode(&now).to_vec());
 			journal_overlay.latest_era = Some(now);
 		}
 
@@ -434,12 +434,12 @@ impl JournalDB for OverlayRecentDB {
 		Ok(ops)
 	}
 
-	fn consolidate(&mut self, with: MemoryDB<KeccakHasher>) {
+	fn consolidate(&mut self, with: MemoryDB<KeccakHasher, DBValue>) {
 		self.transaction_overlay.consolidate(with);
 	}
 }
 
-impl HashDB<KeccakHasher> for OverlayRecentDB {
+impl HashDB<KeccakHasher, DBValue> for OverlayRecentDB {
 	fn keys(&self) -> HashMap<H256, i32> {
 		let mut ret: HashMap<H256, i32> = self.backing.iter(self.column)
 			.map(|(key, _)| (H256::from_slice(&*key), 1))
@@ -493,8 +493,7 @@ mod tests {
 
 	use keccak::keccak;
 	use super::*;
-	use hashdb::{HashDB, DBValue};
-	use ethcore_logger::init_log;
+	use hashdb::HashDB;
 	use {kvdb_memorydb, JournalDB};
 
 	fn new_db() -> OverlayRecentDB {
@@ -772,7 +771,7 @@ mod tests {
 
 	#[test]
 	fn insert_delete_insert_delete_insert_expunge() {
-		init_log();
+		let _ = ::env_logger::try_init();
 		let mut jdb = new_db();
 
 		// history is 4
@@ -798,7 +797,7 @@ mod tests {
 
 	#[test]
 	fn forked_insert_delete_insert_delete_insert_expunge() {
-		init_log();
+		let _ = ::env_logger::try_init();
 		let mut jdb = new_db();
 
 		// history is 4
@@ -905,7 +904,7 @@ mod tests {
 
 	#[test]
 	fn reopen_remove_three() {
-		init_log();
+		let _ = ::env_logger::try_init();
 
 		let shared_db = Arc::new(kvdb_memorydb::create(0));
 		let foo = keccak(b"foo");

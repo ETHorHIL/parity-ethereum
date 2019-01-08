@@ -1,39 +1,38 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
-use devtools::http_client;
 use jsonrpc_core::MetaIoHandler;
 use http::{self, hyper};
 
 use {HttpServer};
 use tests::helpers::Server;
+use tests::http_client;
 use v1::{extractors, Metadata};
 
 fn serve(handler: Option<MetaIoHandler<Metadata>>) -> Server<HttpServer> {
 	let address = "127.0.0.1:0".parse().unwrap();
 	let handler = handler.unwrap_or_default();
 
-	Server::new(|remote| ::start_http_with_middleware(
+	Server::new(|_remote| ::start_http_with_middleware(
 		&address,
 		http::DomainsValidation::Disabled,
 		http::DomainsValidation::Disabled,
 		handler,
-		remote,
 		extractors::RpcExtractor,
-		|request: hyper::Request| {
+		|request: hyper::Request<hyper::Body>| {
 			http::RequestMiddlewareAction::Proceed {
 				should_continue_on_invalid_cors: false,
 				request,
@@ -41,6 +40,7 @@ fn serve(handler: Option<MetaIoHandler<Metadata>>) -> Server<HttpServer> {
 		},
 		1,
 		5,
+		false,
 	).unwrap())
 }
 
@@ -50,7 +50,7 @@ fn request(server: Server<HttpServer>, request: &str) -> http_client::Response {
 }
 
 #[cfg(test)]
-mod testsing {
+mod tests {
 	use jsonrpc_core::{MetaIoHandler, Value};
 	use v1::Metadata;
 	use super::{request, Server};
@@ -73,7 +73,7 @@ mod testsing {
 
 		// when
 		let req = r#"{"method":"hello","params":[],"jsonrpc":"2.0","id":1}"#;
-		let expected = "4B\n{\"jsonrpc\":\"2.0\",\"result\":\"unknown origin / unknown agent via RPC\",\"id\":1}\n\n0\n\n";
+		let expected = "{\"jsonrpc\":\"2.0\",\"result\":\"unknown origin / unknown agent via RPC\",\"id\":1}\n";
 		let res = request(server,
 			&format!("\
 				POST / HTTP/1.1\r\n\
@@ -98,7 +98,7 @@ mod testsing {
 
 		// when
 		let req = r#"{"method":"hello","params":[],"jsonrpc":"2.0","id":1}"#;
-		let expected = "49\n{\"jsonrpc\":\"2.0\",\"result\":\"unknown origin / curl/7.16.3 via RPC\",\"id\":1}\n\n0\n\n";
+		let expected = "{\"jsonrpc\":\"2.0\",\"result\":\"unknown origin / curl/7.16.3 via RPC\",\"id\":1}\n";
 		let res = request(server,
 			&format!("\
 				POST / HTTP/1.1\r\n\

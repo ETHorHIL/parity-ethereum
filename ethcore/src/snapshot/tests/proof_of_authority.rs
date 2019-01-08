@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! PoA block chunker and rebuilder tests.
 
@@ -26,13 +26,13 @@ use ethkey::Secret;
 use snapshot::tests::helpers as snapshot_helpers;
 use spec::Spec;
 use test_helpers::generate_dummy_client_with_spec_and_accounts;
-use transaction::{Transaction, Action, SignedTransaction};
+use types::transaction::{Transaction, Action, SignedTransaction};
 use tempdir::TempDir;
 
 use ethereum_types::Address;
 use test_helpers;
 
-use_contract!(test_validator_set, "ValidatorSet", "res/contracts/test_validator_set.json");
+use_contract!(test_validator_set, "res/contracts/test_validator_set.json");
 
 const PASS: &'static str = "";
 const TRANSITION_BLOCK_1: usize = 2; // block at which the contract becomes activated.
@@ -131,11 +131,9 @@ fn make_chain(accounts: Arc<AccountProvider>, blocks_beyond: usize, transitions:
 				data: Vec::new(),
 			}.sign(&*RICH_SECRET, client.signing_chain_id());
 
-			*nonce = *nonce + 1.into();
+			*nonce = *nonce + 1;
 			vec![transaction]
 		};
-
-		let contract = test_validator_set::ValidatorSet::default();
 
 		// apply all transitions.
 		for transition in transitions {
@@ -163,7 +161,7 @@ fn make_chain(accounts: Arc<AccountProvider>, blocks_beyond: usize, transitions:
 					false => &CONTRACT_ADDR_1 as &Address,
 				};
 
-				let data = contract.functions().set_validators().input(new_set.clone());
+				let data = test_validator_set::functions::set_validators::encode_input(new_set.clone());
 				let mut nonce = nonce.borrow_mut();
 				let transaction = Transaction {
 					nonce: *nonce,
@@ -174,7 +172,7 @@ fn make_chain(accounts: Arc<AccountProvider>, blocks_beyond: usize, transitions:
 					data,
 				}.sign(&*RICH_SECRET, client.signing_chain_id());
 
-				*nonce = *nonce + 1.into();
+				*nonce = *nonce + 1;
 				vec![transaction]
 			} else {
 				make_useless_transactions()

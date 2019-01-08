@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Disk-backed `HashDB` implementation.
 
@@ -26,8 +26,8 @@ use rlp::{Rlp, RlpStream, Encodable, DecoderError, Decodable, encode, decode};
 use hashdb::*;
 use keccak_hasher::KeccakHasher;
 use memorydb::*;
-use kvdb::{KeyValueDB, DBTransaction};
-use super::error_negatively_reference_hash;
+use kvdb::{KeyValueDB, DBTransaction, DBValue};
+use super::{error_negatively_reference_hash};
 
 /// Implementation of the `HashDB` trait for a disk-backed database with a memory overlay.
 ///
@@ -39,7 +39,7 @@ use super::error_negatively_reference_hash;
 /// queries have an immediate effect in terms of these functions.
 #[derive(Clone)]
 pub struct OverlayDB {
-	overlay: MemoryDB<KeccakHasher>,
+	overlay: MemoryDB<KeccakHasher, DBValue>,
 	backing: Arc<KeyValueDB>,
 	column: Option<u32>,
 }
@@ -140,7 +140,7 @@ impl OverlayDB {
 	fn payload(&self, key: &H256) -> Option<Payload> {
 		self.backing.get(self.column, key)
 			.expect("Low-level database error. Some issue with your hard disk?")
-			.map(|d| decode(&d).expect("decoding db value failed"))
+			.map(|ref d| decode(d).expect("decoding db value failed") )
 	}
 
 	/// Put the refs and value of the given key, possibly deleting it from the db.
@@ -155,7 +155,7 @@ impl OverlayDB {
 	}
 }
 
-impl HashDB<KeccakHasher> for OverlayDB {
+impl HashDB<KeccakHasher, DBValue> for OverlayDB {
 	fn keys(&self) -> HashMap<H256, i32> {
 		let mut ret: HashMap<H256, i32> = self.backing.iter(self.column)
 			.map(|(key, _)| {

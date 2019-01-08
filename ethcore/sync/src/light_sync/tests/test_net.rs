@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! TestNet peer definition.
 
@@ -68,6 +68,7 @@ impl<'a> IoContext for TestIoContext<'a> {
 	fn protocol_version(&self, _peer: PeerId) -> Option<u8> { Some(::light::net::MAX_PROTOCOL_VERSION) }
 
 	fn persistent_peer_id(&self, _peer: PeerId) -> Option<NodeId> { unimplemented!() }
+	fn is_reserved_peer(&self, _peer: PeerId) -> bool { false }
 }
 
 // peer-specific data.
@@ -164,7 +165,7 @@ impl PeerLike for Peer {
 
 	fn on_connect(&self, other: PeerId) {
 		let io = self.io(Some(other));
-		self.proto.on_connect(&other, &io);
+		self.proto.on_connect(other, &io);
 	}
 
 	fn on_disconnect(&self, other: PeerId){
@@ -174,7 +175,7 @@ impl PeerLike for Peer {
 
 	fn receive_message(&self, from: PeerId, msg: TestPacket) -> HashSet<PeerId> {
 		let io = self.io(Some(from));
-		self.proto.handle_packet(&io, &from, msg.packet_id, &msg.data);
+		self.proto.handle_packet(&io, from, msg.packet_id, &msg.data);
 		io.to_disconnect.into_inner()
 	}
 

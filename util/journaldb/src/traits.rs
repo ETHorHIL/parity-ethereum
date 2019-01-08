@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Disk-backed `HashDB` implementation.
 
@@ -21,13 +21,13 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use ethereum_types::H256;
-use hashdb::*;
+use hashdb::HashDB;
 use keccak_hasher::KeccakHasher;
-use kvdb::{self, DBTransaction};
+use kvdb::{self, DBTransaction, DBValue};
 
 /// A `HashDB` which can manage a short-term journal potentially containing many forks of mutually
 /// exclusive actions.
-pub trait JournalDB: HashDB<KeccakHasher> {
+pub trait JournalDB: HashDB<KeccakHasher, DBValue> {
 	/// Return a copy of ourself, in a box.
 	fn boxed_clone(&self) -> Box<JournalDB>;
 
@@ -78,7 +78,7 @@ pub trait JournalDB: HashDB<KeccakHasher> {
 	fn flush(&self) {}
 
 	/// Consolidate all the insertions and deletions in the given memory overlay.
-	fn consolidate(&mut self, overlay: ::memorydb::MemoryDB<KeccakHasher>);
+	fn consolidate(&mut self, overlay: ::memorydb::MemoryDB<KeccakHasher, DBValue>);
 
 	/// Commit all changes in a single batch
 	#[cfg(test)]

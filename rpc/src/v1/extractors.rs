@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Parity-specific metadata extractors.
 
@@ -23,6 +23,7 @@ use authcodes;
 use http_common::HttpMetaExtractor;
 use ipc;
 use jsonrpc_core as core;
+use jsonrpc_core::futures::future::Either;
 use jsonrpc_pubsub::Session;
 use ws;
 use ethereum_types::H256;
@@ -216,26 +217,27 @@ impl<M: core::Middleware<Metadata>> WsDispatcher<M> {
 }
 
 impl<M: core::Middleware<Metadata>> core::Middleware<Metadata> for WsDispatcher<M> {
-	type Future = core::futures::future::Either<
-		M::Future,
+	type Future = Either<
+		core::FutureRpcResult<M::Future, M::CallFuture>,
 		core::FutureResponse,
 	>;
+	type CallFuture = core::middleware::NoopCallFuture;
 
-	fn on_request<F, X>(&self, request: core::Request, meta: Metadata, process: F) -> Self::Future where
+	fn on_request<F, X>(&self, request: core::Request, meta: Metadata, process: F)
+		-> Either<Self::Future, X>
+	where
 		F: FnOnce(core::Request, Metadata) -> X,
 		X: core::futures::Future<Item=Option<core::Response>, Error=()> + Send + 'static,
 	{
-		use self::core::futures::future::Either::{A, B};
-
 		let use_full = match &meta.origin {
 			&Origin::Signer { .. } => true,
 			_ => false,
 		};
 
 		if use_full {
-			A(self.full_handler.handle_rpc_request(request, meta))
+			Either::A(Either::A(self.full_handler.handle_rpc_request(request, meta)))
 		} else {
-			B(Box::new(process(request, meta)))
+			Either::B(process(request, meta))
 		}
 	}
 }

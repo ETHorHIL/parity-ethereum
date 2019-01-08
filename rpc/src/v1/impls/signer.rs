@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Transactions Confirmations rpc implementation
 
@@ -20,10 +20,10 @@ use std::sync::Arc;
 
 use ethcore::account_provider::AccountProvider;
 use ethkey;
-use parity_reactor::Remote;
+use parity_runtime::Executor;
 use parking_lot::Mutex;
 use rlp::Rlp;
-use transaction::{SignedTransaction, PendingTransaction};
+use types::transaction::{SignedTransaction, PendingTransaction};
 
 use jsonrpc_core::{Result, BoxFuture, Error};
 use jsonrpc_core::futures::{future, Future, IntoFuture};
@@ -50,7 +50,7 @@ impl<D: Dispatcher + 'static> SignerClient<D> {
 		store: &Arc<AccountProvider>,
 		dispatcher: D,
 		signer: &Arc<SignerService>,
-		remote: Remote,
+		executor: Executor,
 	) -> Self {
 		let subscribers = Arc::new(Mutex::new(Subscribers::default()));
 		let subs = Arc::downgrade(&subscribers);
@@ -60,7 +60,7 @@ impl<D: Dispatcher + 'static> SignerClient<D> {
 				let requests = s.requests().into_iter().map(Into::into).collect::<Vec<ConfirmationRequest>>();
 				for subscription in subs.lock().values() {
 					let subscription: &Sink<_> = subscription;
-					remote.spawn(subscription
+					executor.spawn(subscription
 						.notify(Ok(requests.clone()))
 						.map(|_| ())
 						.map_err(|e| warn!(target: "rpc", "Unable to send notification: {}", e))
@@ -210,6 +210,14 @@ impl<D: Dispatcher + 'static> Signer for SignerClient<D> {
 					let expected_hash = eth_data_hash(data);
 					let signature = ethkey::Signature::from_electrum(&bytes.0);
 					match ethkey::verify_address(&address, &signature, &expected_hash) {
+						Ok(true) => Ok(ConfirmationResponse::Signature(bytes.0.as_slice().into())),
+						Ok(false) => Err(errors::invalid_params("Sender address does not match the signature.", ())),
+						Err(err) => Err(errors::invalid_params("Invalid signature received.", err)),
+					}
+				},
+				ConfirmationPayload::SignMessage(address, hash) => {
+					let signature = ethkey::Signature::from_electrum(&bytes.0);
+					match ethkey::verify_address(&address, &signature, &hash) {
 						Ok(true) => Ok(ConfirmationResponse::Signature(bytes.0.as_slice().into())),
 						Ok(false) => Err(errors::invalid_params("Sender address does not match the signature.", ())),
 						Err(err) => Err(errors::invalid_params("Invalid signature received.", err)),

@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::cmp;
 use std::time::{Instant, Duration};
@@ -21,39 +21,42 @@ use std::sync::Arc;
 
 use ansi_term::Colour;
 use bytes::Bytes;
-use engines::{EthEngine, Seal};
-use error::{Error, ErrorKind, ExecutionError};
 use ethcore_miner::gas_pricer::GasPricer;
 use ethcore_miner::pool::{self, TransactionQueue, VerifiedTransaction, QueueStatus, PrioritizationStrategy};
 #[cfg(feature = "work-notify")]
 use ethcore_miner::work_notify::NotifyWork;
 use ethereum_types::{H256, U256, Address};
+use ethkey::Password;
 use io::IoChannel;
+use miner::pool_client::{PoolClient, CachedNonceClient, NonceCache};
+use miner;
 use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
-use transaction::{
+use types::transaction::{
 	self,
 	Action,
 	UnverifiedTransaction,
 	SignedTransaction,
 	PendingTransaction,
 };
+use types::BlockNumber;
+use types::block::Block;
+use types::header::Header;
+use types::receipt::RichReceipt;
 use using_queue::{UsingQueue, GetAction};
 
 use account_provider::{AccountProvider, SignError as AccountError};
-use block::{ClosedBlock, IsBlock, Block, SealedBlock};
+use block::{ClosedBlock, IsBlock, SealedBlock};
 use client::{
 	BlockChain, ChainInfo, CallContract, BlockProducer, SealedBlockImporter, Nonce, TransactionInfo, TransactionId
 };
 use client::{BlockId, ClientIoMessage};
+use engines::{EthEngine, Seal};
+use error::{Error, ErrorKind};
+use executed::ExecutionError;
 use executive::contract_address;
-use header::{Header, BlockNumber};
-use miner;
-use miner::pool_client::{PoolClient, CachedNonceClient, NonceCache};
-use receipt::{Receipt, RichReceipt};
 use spec::Spec;
 use state::State;
-use ethkey::Password;
 
 /// Different possible definitions for pending transaction set.
 #[derive(Debug, PartialEq)]
@@ -576,10 +579,9 @@ impl Miner {
 		trace!(target: "miner", "requires_reseal: sealing enabled");
 
 		// Disable sealing if there were no requests for SEALING_TIMEOUT_IN_BLOCKS
-		let had_requests = sealing.last_request.map(|last_request| {
-			best_block > last_request
-				&& best_block - last_request <= SEALING_TIMEOUT_IN_BLOCKS
-		}).unwrap_or(false);
+		let had_requests = sealing.last_request.map(|last_request|
+			best_block.saturating_sub(last_request) <= SEALING_TIMEOUT_IN_BLOCKS
+		).unwrap_or(false);
 
 		// keep sealing enabled if any of the conditions is met
 		let sealing_enabled = self.forced_sealing()
@@ -852,11 +854,11 @@ impl miner::MinerService for Miner {
 
 	fn sensible_gas_price(&self) -> U256 {
 		// 10% above our minimum.
-		self.transaction_queue.current_worst_gas_price() * 110u32 / 100.into()
+		self.transaction_queue.current_worst_gas_price() * 110u32 / 100
 	}
 
 	fn sensible_gas_limit(&self) -> U256 {
-		self.params.read().gas_range_target.0 / 5.into()
+		self.params.read().gas_range_target.0 / 5
 	}
 
 	fn import_external_transactions<C: miner::BlockChainClient>(
@@ -936,6 +938,10 @@ impl miner::MinerService for Miner {
 
 	fn queued_transactions(&self) -> Vec<Arc<VerifiedTransaction>> {
 		self.transaction_queue.all_transactions()
+	}
+
+	fn queued_transaction_hashes(&self) -> Vec<H256> {
+		self.transaction_queue.all_transaction_hashes()
 	}
 
 	fn pending_transaction_hashes<C>(&self, chain: &C) -> BTreeSet<H256> where
@@ -1039,19 +1045,17 @@ impl miner::MinerService for Miner {
 		self.transaction_queue.status()
 	}
 
-	fn pending_receipt(&self, best_block: BlockNumber, hash: &H256) -> Option<RichReceipt> {
+	fn pending_receipts(&self, best_block: BlockNumber) -> Option<Vec<RichReceipt>> {
 		self.map_existing_pending_block(|pending| {
-			let txs = pending.transactions();
-			txs.iter()
-				.map(|t| t.hash())
-				.position(|t| t == *hash)
-				.map(|index| {
-					let receipts = pending.receipts();
+			let receipts = pending.receipts();
+			pending.transactions()
+				.into_iter()
+				.enumerate()
+				.map(|(index, tx)| {
 					let prev_gas = if index == 0 { Default::default() } else { receipts[index - 1].gas_used };
-					let tx = &txs[index];
 					let receipt = &receipts[index];
 					RichReceipt {
-						transaction_hash: hash.clone(),
+						transaction_hash: tx.hash(),
 						transaction_index: index,
 						cumulative_gas_used: receipt.gas_used,
 						gas_used: receipt.gas_used - prev_gas,
@@ -1067,15 +1071,7 @@ impl miner::MinerService for Miner {
 						outcome: receipt.outcome.clone(),
 					}
 				})
-		}, best_block).and_then(|x| x)
-	}
-
-	fn pending_receipts(&self, best_block: BlockNumber) -> Option<BTreeMap<H256, Receipt>> {
-		self.map_existing_pending_block(|pending| {
-			let hashes = pending.transactions().iter().map(|t| t.hash());
-			let receipts = pending.receipts().iter().cloned();
-
-			hashes.zip(receipts).collect()
+				.collect()
 		}, best_block)
 	}
 
@@ -1199,7 +1195,6 @@ impl miner::MinerService for Miner {
 		let gas_limit = *chain.best_block_header().gas_limit();
 		self.update_transaction_queue_limits(gas_limit);
 
-
 		// Then import all transactions from retracted blocks.
 		let client = self.pool_client(chain);
 		{
@@ -1291,13 +1286,13 @@ mod tests {
 	use super::*;
 	use ethkey::{Generator, Random};
 	use hash::keccak;
-	use header::BlockNumber;
 	use rustc_hex::FromHex;
+	use types::BlockNumber;
 
 	use client::{TestBlockChainClient, EachBlockWith, ChainInfo, ImportSealedBlock};
 	use miner::{MinerService, PendingOrdering};
 	use test_helpers::{generate_dummy_client, generate_dummy_client_with_spec_and_accounts};
-	use transaction::{Transaction};
+	use types::transaction::{Transaction};
 
 	#[test]
 	fn should_prepare_block_to_seal() {
@@ -1398,6 +1393,33 @@ mod tests {
 		assert_eq!(miner.ready_transactions(&client, 10, PendingOrdering::Priority).len(), 1);
 		// This method will let us know if pending block was created (before calling that method)
 		assert_eq!(miner.prepare_pending_block(&client), BlockPreparationStatus::NotPrepared);
+	}
+
+	#[test]
+	fn should_not_return_stale_work_packages() {
+		// given
+		let client = TestBlockChainClient::default();
+		let miner = miner();
+
+		// initial work package should create the pending block
+		let res = miner.work_package(&client);
+		assert_eq!(res.unwrap().1, 1);
+		// This should be true, since there were some requests.
+		assert_eq!(miner.requires_reseal(0), true);
+
+		// when new block is imported
+		let client = generate_dummy_client(2);
+		let imported = [0.into()];
+		let empty = &[];
+		miner.chain_new_blocks(&*client, &imported, empty, &imported, empty, false);
+
+		// then
+		// This should be false, because it's too early.
+		assert_eq!(miner.requires_reseal(2), false);
+		// but still work package should be ready
+		let res = miner.work_package(&*client);
+		assert_eq!(res.unwrap().1, 3);
+		assert_eq!(miner.prepare_pending_block(&*client), BlockPreparationStatus::NotPrepared);
 	}
 
 	#[test]

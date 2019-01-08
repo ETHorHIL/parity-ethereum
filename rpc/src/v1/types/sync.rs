@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::BTreeMap;
 use sync::{self, PeerInfo as SyncPeerInfo, TransactionStats as SyncTransactionStats};
@@ -21,21 +21,17 @@ use v1::types::{U256, H512};
 
 /// Sync info
 #[derive(Default, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncInfo {
 	/// Starting block
-	#[serde(rename="startingBlock")]
 	pub starting_block: U256,
 	/// Current block
-	#[serde(rename="currentBlock")]
 	pub current_block: U256,
 	/// Highest block seen so far
-	#[serde(rename="highestBlock")]
 	pub highest_block: U256,
 	/// Warp sync snapshot chunks total.
-	#[serde(rename="warpChunksAmount")]
 	pub warp_chunks_amount: Option<U256>,
 	/// Warp sync snpashot chunks processed.
-	#[serde(rename="warpChunksProcessed")]
 	pub warp_chunks_processed: Option<U256>,
 }
 
@@ -69,12 +65,11 @@ pub struct PeerInfo {
 
 /// Peer network information
 #[derive(Default, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PeerNetworkInfo {
 	/// Remote endpoint address
-	#[serde(rename="remoteAddress")]
 	pub remote_address: String,
 	/// Local endpoint address
-	#[serde(rename="localAddress")]
 	pub local_address: String,
 }
 
@@ -150,12 +145,11 @@ impl Serialize for SyncStatus {
 
 /// Propagation statistics for pending transaction.
 #[derive(Default, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransactionStats {
 	/// Block no this transaction was first seen.
-	#[serde(rename="firstSeen")]
 	pub first_seen: u64,
 	/// Peers this transaction was propagated to with count.
-	#[serde(rename="propagatedTo")]
 	pub propagated_to: BTreeMap<H512, usize>,
 }
 
@@ -191,9 +185,9 @@ impl From<SyncTransactionStats> for TransactionStats {
 
 /// Chain status.
 #[derive(Default, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChainStatus {
 	/// Describes the gap in the blockchain, if there is one: (first, last)
-	#[serde(rename="blockGap")]
 	pub block_gap: Option<(U256, U256)>,
 }
 

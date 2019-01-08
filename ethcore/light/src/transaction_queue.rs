@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Light Transaction Queue.
 //!
@@ -27,7 +27,7 @@ use std::fmt;
 use std::collections::{BTreeMap, HashMap};
 use std::collections::hash_map::Entry;
 
-use transaction::{self, Condition, PendingTransaction, SignedTransaction};
+use common_types::transaction::{self, Condition, PendingTransaction, SignedTransaction};
 use ethereum_types::{H256, U256, Address};
 use fastmap::H256FastMap;
 
@@ -74,7 +74,7 @@ impl<'a> From<&'a PendingTransaction> for TransactionInfo {
 	fn from(tx: &'a PendingTransaction) -> Self {
 		TransactionInfo {
 			hash: tx.hash(),
-			nonce: tx.nonce.clone(),
+			nonce: tx.nonce,
 			condition: tx.condition.clone(),
 		}
 	}
@@ -95,7 +95,7 @@ impl AccountTransactions {
 	}
 
 	fn next_nonce(&self) -> U256 {
-		self.current.last().map(|last| last.nonce + 1.into())
+		self.current.last().map(|last| last.nonce + 1)
 			.unwrap_or_else(|| *self.cur_nonce.value())
 	}
 
@@ -104,16 +104,10 @@ impl AccountTransactions {
 		let mut promoted = Vec::new();
 		let mut next_nonce = self.next_nonce();
 
-		loop {
-			match self.future.remove(&next_nonce) {
-				Some(tx) => {
-					promoted.push(tx.hash);
-					self.current.push(tx)
-				},
-				None => break,
-			}
-
-			next_nonce = next_nonce + 1.into();
+		while let Some(tx) = self.future.remove(&next_nonce) {
+			promoted.push(tx.hash);
+			self.current.push(tx);
+			next_nonce = next_nonce + 1;
 		}
 
 		promoted
@@ -154,7 +148,7 @@ impl fmt::Debug for TransactionQueue {
 
 impl TransactionQueue {
 	/// Import a pending transaction to be queued.
-	pub fn import(&mut self, tx: PendingTransaction) -> Result<ImportDestination, transaction::Error>  {
+	pub fn import(&mut self, tx: PendingTransaction) -> Result<ImportDestination, transaction::Error> {
 		let sender = tx.sender();
 		let hash = tx.hash();
 		let nonce = tx.nonce;
@@ -174,7 +168,7 @@ impl TransactionQueue {
 			}
 			Entry::Occupied(mut entry) => {
 				let acct_txs = entry.get_mut();
-				if &nonce < acct_txs.cur_nonce.value() {
+				if nonce < *acct_txs.cur_nonce.value() {
 					// don't accept txs from before known current nonce.
 					if acct_txs.cur_nonce.is_known() {
 						return Err(transaction::Error::Old)
@@ -196,7 +190,7 @@ impl TransactionQueue {
 					}
 					Err(idx) => {
 						let cur_len = acct_txs.current.len();
-						let incr_nonce = nonce + 1.into();
+						let incr_nonce = nonce + 1;
 
 						// current is sorted with one tx per nonce,
 						// so if a tx with given nonce wasn't found that means it is either
@@ -215,7 +209,7 @@ impl TransactionQueue {
 							}
 
 							(ImportDestination::Current, vec![hash])
-						} else if idx == cur_len && acct_txs.current.last().map_or(false, |f| f.nonce + 1.into() != nonce) {
+						} else if idx == cur_len && acct_txs.current.last().map_or(false, |f| f.nonce + 1 != nonce) {
 							trace!(target: "txqueue", "Queued future transaction for {}, nonce={}", sender, nonce);
 							let future_nonce = nonce;
 							acct_txs.future.insert(future_nonce, tx_info);
@@ -376,7 +370,7 @@ impl TransactionQueue {
 mod tests {
 	use super::TransactionQueue;
 	use ethereum_types::Address;
-	use transaction::{Transaction, PendingTransaction, Condition};
+	use common_types::transaction::{Transaction, PendingTransaction, Condition};
 
 	#[test]
 	fn queued_senders() {
@@ -535,7 +529,7 @@ mod tests {
 		let tx_b: PendingTransaction = Transaction::default().fake_sign(sender).into();
 		let tx_a: PendingTransaction = {
 			let mut tx_a = Transaction::default();
-			tx_a.gas_price = tx_b.gas_price + 1.into();
+			tx_a.gas_price = tx_b.gas_price + 1;
 			tx_a.fake_sign(sender).into()
 		};
 

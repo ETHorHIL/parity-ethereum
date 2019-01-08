@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 /// Parity-specific rpc interface for operations altering the settings.
 use std::io;
@@ -23,7 +23,6 @@ use ethcore::client::{BlockChainClient, Mode};
 use ethcore::miner::MinerService;
 use sync::ManageNetwork;
 use fetch::{self, Fetch};
-use futures_cpupool::CpuPool;
 use hash::keccak_buffer;
 use updater::{Service as UpdateService};
 
@@ -40,7 +39,6 @@ pub struct ParitySetClient<C, M, U, F = fetch::Client> {
 	updater: Arc<U>,
 	net: Arc<ManageNetwork>,
 	fetch: F,
-	pool: CpuPool,
 }
 
 impl<C, M, U, F> ParitySetClient<C, M, U, F>
@@ -53,7 +51,6 @@ impl<C, M, U, F> ParitySetClient<C, M, U, F>
 		updater: &Arc<U>,
 		net: &Arc<ManageNetwork>,
 		fetch: F,
-		pool: CpuPool,
 	) -> Self {
 		ParitySetClient {
 			client: client.clone(),
@@ -61,7 +58,6 @@ impl<C, M, U, F> ParitySetClient<C, M, U, F>
 			updater: updater.clone(),
 			net: net.clone(),
 			fetch: fetch,
-			pool: pool,
 		}
 	}
 }
@@ -177,7 +173,7 @@ impl<C, M, U, F> ParitySet for ParitySetClient<C, M, U, F> where
 				})
 				.map(Into::into)
 		});
-		Box::new(self.pool.spawn(future))
+		Box::new(future)
 	}
 
 	fn upgrade_ready(&self) -> Result<Option<ReleaseInfo>> {

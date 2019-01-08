@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Creates and registers client and network services.
 
@@ -21,11 +21,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use ansi_term::Colour;
+use ethereum_types::H256;
 use io::{IoContext, TimerToken, IoHandler, IoService, IoError};
 use stop_guard::StopGuard;
 
 use sync::PrivateTxHandler;
-use ethcore::{BlockChainDB, BlockChainDBHandler};
+use blockchain::{BlockChainDB, BlockChainDBHandler};
 use ethcore::client::{Client, ClientConfig, ChainNotify, ClientIoMessage};
 use ethcore::miner::Miner;
 use ethcore::snapshot::service::{Service as SnapshotService, ServiceParams as SnapServiceParams};
@@ -54,12 +55,24 @@ impl PrivateTxService {
 }
 
 impl PrivateTxHandler for PrivateTxService {
-	fn import_private_transaction(&self, rlp: &[u8]) -> Result<(), String> {
-		self.provider.import_private_transaction(rlp).map_err(|e| e.to_string())
+	fn import_private_transaction(&self, rlp: &[u8]) -> Result<H256, String> {
+		match self.provider.import_private_transaction(rlp) {
+			Ok(import_result) => Ok(import_result),
+			Err(err) => {
+				warn!(target: "privatetx", "Unable to import private transaction packet: {}", err);
+				bail!(err.to_string())
+			}
+		}
 	}
 
-	fn import_signed_private_transaction(&self, rlp: &[u8]) -> Result<(), String> {
-		self.provider.import_signed_private_transaction(rlp).map_err(|e| e.to_string())
+	fn import_signed_private_transaction(&self, rlp: &[u8]) -> Result<H256, String> {
+		match self.provider.import_signed_private_transaction(rlp) {
+			Ok(import_result) => Ok(import_result),
+			Err(err) => {
+				warn!(target: "privatetx", "Unable to import signed private transaction packet: {}", err);
+				bail!(err.to_string())
+			}
+		}
 	}
 }
 
@@ -93,7 +106,13 @@ impl ClientService {
 		info!("Configured for {} using {} engine", Colour::White.bold().paint(spec.name.clone()), Colour::Yellow.bold().paint(spec.engine.name()));
 
 		let pruning = config.pruning;
-		let client = Client::new(config, &spec, blockchain_db.clone(), miner.clone(), io_service.channel())?;
+		let client = Client::new(
+			config,
+			&spec,
+			blockchain_db.clone(),
+			miner.clone(),
+			io_service.channel(),
+		)?;
 		miner.set_io_channel(io_service.channel());
 		miner.set_in_chain_checker(&client.clone());
 
@@ -104,7 +123,7 @@ impl ClientService {
 			pruning: pruning,
 			channel: io_service.channel(),
 			snapshot_root: snapshot_path.into(),
-			db_restore: client.clone(),
+			client: client.clone(),
 		};
 		let snapshot = Arc::new(SnapshotService::new(snapshot_params)?);
 
@@ -256,11 +275,11 @@ mod tests {
 
 	use tempdir::TempDir;
 
+	use ethcore_db::NUM_COLUMNS;
 	use ethcore::account_provider::AccountProvider;
 	use ethcore::client::ClientConfig;
 	use ethcore::miner::Miner;
 	use ethcore::spec::Spec;
-	use ethcore::db::NUM_COLUMNS;
 	use ethcore::test_helpers;
 	use kvdb_rocksdb::{DatabaseConfig, CompactionProfile};
 	use super::*;

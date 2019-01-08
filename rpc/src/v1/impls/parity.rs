@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Parity-specific rpc implementation.
 use std::sync::Arc;
@@ -23,29 +23,32 @@ use ethereum_types::Address;
 use version::version_data;
 
 use crypto::DEFAULT_MAC;
-use ethkey::{crypto::ecies, Brain, Generator};
-use ethstore::random_phrase;
-use sync::{SyncProvider, ManageNetwork};
 use ethcore::account_provider::AccountProvider;
 use ethcore::client::{BlockChainClient, StateClient, Call};
-use ethcore::ids::BlockId;
 use ethcore::miner::{self, MinerService};
+use ethcore::snapshot::{SnapshotService, RestorationStatus};
 use ethcore::state::StateInfo;
 use ethcore_logger::RotatingLogger;
-use updater::{Service as UpdateService};
-use jsonrpc_core::{BoxFuture, Result};
+use ethkey::{crypto::ecies, Brain, Generator};
+use ethstore::random_phrase;
 use jsonrpc_core::futures::future;
+use jsonrpc_core::{BoxFuture, Result};
 use jsonrpc_macros::Trailing;
-use v1::helpers::{self, errors, fake_sign, ipfs, SigningQueue, SignerService, NetworkSettings};
+use sync::{SyncProvider, ManageNetwork};
+use types::ids::BlockId;
+use updater::{Service as UpdateService};
+
+use v1::helpers::block_import::is_major_importing;
+use v1::helpers::{self, errors, fake_sign, ipfs, SigningQueue, SignerService, NetworkSettings, verify_signature};
 use v1::metadata::Metadata;
 use v1::traits::Parity;
 use v1::types::{
-	Bytes, U256, U64, H160, H256, H512, CallRequest,
+	Bytes, U256, H64, U64, H160, H256, H512, CallRequest,
 	Peers, Transaction, RpcSettings, Histogram,
 	TransactionStats, LocalTransactionStatus,
 	BlockNumber, ConsensusCapability, VersionInfo,
-	OperationsInfo, ChainStatus,
-	AccountInfo, HwAccountInfo, RichHeader,
+	OperationsInfo, ChainStatus, Log, Filter,
+	AccountInfo, HwAccountInfo, RichHeader, Receipt, RecoveredAccount,
 	block_number_to_id
 };
 use Host;
@@ -62,6 +65,7 @@ pub struct ParityClient<C, M, U> {
 	settings: Arc<NetworkSettings>,
 	signer: Option<Arc<SignerService>>,
 	ws_address: Option<Host>,
+	snapshot: Option<Arc<SnapshotService>>,
 }
 
 impl<C, M, U> ParityClient<C, M, U> where
@@ -79,6 +83,7 @@ impl<C, M, U> ParityClient<C, M, U> where
 		settings: Arc<NetworkSettings>,
 		signer: Option<Arc<SignerService>>,
 		ws_address: Option<Host>,
+		snapshot: Option<Arc<SnapshotService>>,
 	) -> Self {
 		ParityClient {
 			client,
@@ -91,6 +96,7 @@ impl<C, M, U> ParityClient<C, M, U> where
 			settings,
 			signer,
 			ws_address,
+			snapshot,
 		}
 	}
 }
@@ -161,6 +167,7 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 	}
 
 	fn dev_logs(&self) -> Result<Vec<String>> {
+		warn!("This method is deprecated and will be removed in future. See PR #10102");
 		let logs = self.logger.logs();
 		Ok(logs.as_slice().to_owned())
 	}
@@ -171,10 +178,6 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 
 	fn net_chain(&self) -> Result<String> {
 		Ok(self.settings.chain.clone())
-	}
-
-	fn chain_id(&self) -> Result<Option<U64>> {
-		Ok(self.client.signing_chain_id().map(U64::from))
 	}
 
 	fn chain(&self) -> Result<String> {
@@ -309,6 +312,16 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 		)
 	}
 
+	fn all_transaction_hashes(&self) -> Result<Vec<H256>> {
+		let all_transaction_hashes = self.miner.queued_transaction_hashes();
+
+		Ok(all_transaction_hashes
+			.into_iter()
+			.map(|hash| hash.into())
+			.collect()
+		)
+	}
+
 	fn future_transactions(&self) -> Result<Vec<Transaction>> {
 		Err(errors::deprecated("Use `parity_allTransaction` instead."))
 	}
@@ -332,7 +345,7 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 
 	fn ws_url(&self) -> Result<String> {
 		helpers::to_url(&self.ws_address)
-			.ok_or_else(|| errors::ws_disabled())
+			.ok_or_else(errors::ws_disabled)
 	}
 
 	fn next_nonce(&self, address: H160) -> BoxFuture<U256> {
@@ -387,7 +400,8 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 
 		let (header, extra) = if number == BlockNumber::Pending {
 			let info = self.client.chain_info();
-			let header = try_bf!(self.miner.pending_block_header(info.best_block_number).ok_or(errors::unknown_block()));
+			let header =
+				try_bf!(self.miner.pending_block_header(info.best_block_number).ok_or_else(errors::unknown_block));
 
 			(header.encoded(), None)
 		} else {
@@ -398,7 +412,7 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 				BlockNumber::Pending => unreachable!(), // Already covered
 			};
 
-			let header = try_bf!(self.client.block_header(id.clone()).ok_or(errors::unknown_block()));
+			let header = try_bf!(self.client.block_header(id.clone()).ok_or_else(errors::unknown_block));
 			let info = self.client.block_extra_info(id).expect(EXTRA_INFO_PROOF);
 
 			(header, Some(info))
@@ -408,6 +422,27 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 			inner: header.into(),
 			extra_info: extra.unwrap_or_default(),
 		}))
+	}
+
+	fn block_receipts(&self, number: Trailing<BlockNumber>) -> BoxFuture<Vec<Receipt>> {
+		let number = number.unwrap_or_default();
+
+		let id = match number {
+			BlockNumber::Pending => {
+				let info = self.client.chain_info();
+				let receipts = try_bf!(self.miner.pending_receipts(info.best_block_number).ok_or_else(errors::unknown_block));
+				return Box::new(future::ok(receipts
+					.into_iter()
+					.map(Into::into)
+					.collect()
+				))
+			},
+			BlockNumber::Num(num) => BlockId::Number(num),
+			BlockNumber::Earliest => BlockId::Earliest,
+			BlockNumber::Latest => BlockId::Latest,
+		};
+		let receipts = try_bf!(self.client.localized_block_receipts(id).ok_or_else(errors::unknown_block));
+		Box::new(future::ok(receipts.into_iter().map(Into::into).collect()))
 	}
 
 	fn ipfs_cid(&self, content: Bytes) -> Result<String> {
@@ -427,8 +462,8 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 
 		let (mut state, header) = if num == BlockNumber::Pending {
 			let info = self.client.chain_info();
-			let state = self.miner.pending_state(info.best_block_number).ok_or(errors::state_pruned())?;
-			let header = self.miner.pending_block_header(info.best_block_number).ok_or(errors::state_pruned())?;
+			let state = self.miner.pending_state(info.best_block_number).ok_or_else(errors::state_pruned)?;
+			let header = self.miner.pending_block_header(info.best_block_number).ok_or_else(errors::state_pruned)?;
 
 			(state, header)
 		} else {
@@ -439,8 +474,8 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 				BlockNumber::Pending => unreachable!(), // Already covered
 			};
 
-			let state = self.client.state_at(id).ok_or(errors::state_pruned())?;
-			let header = self.client.block_header(id).ok_or(errors::state_pruned())?.decode().map_err(errors::decode)?;
+			let state = self.client.state_at(id).ok_or_else(errors::state_pruned)?;
+			let header = self.client.block_header(id).ok_or_else(errors::state_pruned)?.decode().map_err(errors::decode)?;
 
 			(state, header)
 		};
@@ -448,5 +483,36 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 		self.client.call_many(&requests, &mut state, &header)
 				.map(|res| res.into_iter().map(|res| res.output.into()).collect())
 				.map_err(errors::call)
+	}
+
+	fn submit_work_detail(&self, nonce: H64, pow_hash: H256, mix_hash: H256) -> Result<H256> {
+		helpers::submit_work_detail(&self.client, &self.miner, nonce, pow_hash, mix_hash)
+	}
+
+	fn status(&self) -> Result<()> {
+		let has_peers = self.settings.is_dev_chain || self.sync.status().num_peers > 0;
+		let is_warping = match self.snapshot.as_ref().map(|s| s.status()) {
+			Some(RestorationStatus::Ongoing { .. }) => true,
+			_ => false,
+		};
+		let is_not_syncing =
+			!is_warping &&
+			!is_major_importing(Some(self.sync.status().state), self.client.queue_info());
+
+		if has_peers && is_not_syncing {
+			Ok(())
+		} else {
+			Err(errors::status_error(has_peers))
+		}
+	}
+
+	fn logs_no_tx_hash(&self, filter: Filter) -> BoxFuture<Vec<Log>> {
+		use v1::impls::eth::base_logs;
+		// only specific impl for lightclient
+		base_logs(&*self.client, &*self.miner, filter.into())
+	}
+
+	fn verify_signature(&self, is_prefixed: bool, message: Bytes, r: H256, s: H256, v: U64) -> Result<RecoveredAccount> {
+		verify_signature(is_prefixed, message, r, s, v, self.client.signing_chain_id())
 	}
 }

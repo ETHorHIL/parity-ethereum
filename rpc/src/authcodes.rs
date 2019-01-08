@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -50,8 +50,6 @@ impl TimeProvider for DefaultTimeProvider {
 const TIME_THRESHOLD: u64 = 7;
 /// minimal length of hash
 const TOKEN_LENGTH: usize = 16;
-/// special "initial" token used for authorization when there are no tokens yet.
-const INITIAL_TOKEN: &'static str = "initial";
 /// Separator between fields in serialized tokens file.
 const SEPARATOR: &'static str = ";";
 /// Number of seconds to keep unused tokens.
@@ -163,16 +161,6 @@ impl<T: TimeProvider> AuthCodes<T> {
 
 		let as_token = |code| keccak(format!("{}:{}", code, time));
 
-		// Check if it's the initial token.
-		if self.is_empty() {
-			let initial = &as_token(INITIAL_TOKEN) == hash;
-			// Initial token can be used only once.
-			if initial {
-				let _ = self.generate_new();
-			}
-			return initial;
-		}
-
 		// look for code
 		for code in &mut self.codes {
 			if &as_token(&code.code) == hash {
@@ -239,7 +227,7 @@ mod tests {
 	}
 
 	#[test]
-	fn should_return_true_if_code_is_initial_and_store_is_empty() {
+	fn should_return_false_even_if_code_is_initial_and_store_is_empty() {
 		// given
 		let code = "initial";
 		let time = 99;
@@ -250,7 +238,7 @@ mod tests {
 		let res2 = codes.is_valid(&generate_hash(code, time), time);
 
 		// then
-		assert_eq!(res1, true);
+		assert_eq!(res1, false);
 		assert_eq!(res2, false);
 	}
 

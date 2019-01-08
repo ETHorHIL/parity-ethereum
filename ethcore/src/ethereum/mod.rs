@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Ethereum protocol module.
 //!
@@ -42,19 +42,24 @@ fn load_machine(b: &[u8]) -> EthereumMachine {
 	Spec::load_machine(b).expect("chain spec is invalid")
 }
 
-/// Create a new Foundation Olympic chain spec.
-pub fn new_olympic<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
-	load(params.into(), include_bytes!("../../res/ethereum/olympic.json"))
-}
-
-/// Create a new Foundation Mainnet chain spec.
+/// Create a new Foundation mainnet chain spec.
 pub fn new_foundation<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
 	load(params.into(), include_bytes!("../../res/ethereum/foundation.json"))
 }
 
-/// Create a new Classic Mainnet chain spec without the DAO hardfork.
+/// Create a new Classic mainnet chain spec without the DAO hardfork.
 pub fn new_classic<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
 	load(params.into(), include_bytes!("../../res/ethereum/classic.json"))
+}
+
+/// Create a new POA Network mainnet chain spec.
+pub fn new_poanet<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	load(params.into(), include_bytes!("../../res/ethereum/poacore.json"))
+}
+
+/// Create a new Tobalaba mainnet chain spec.
+pub fn new_tobalaba<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	load(params.into(), include_bytes!("../../res/ethereum/tobalaba.json"))
 }
 
 /// Create a new Expanse mainnet chain spec.
@@ -62,13 +67,10 @@ pub fn new_expanse<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
 	load(params.into(), include_bytes!("../../res/ethereum/expanse.json"))
 }
 
-/// Create a new Tobalaba chain spec.
-pub fn new_tobalaba<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
-	load(params.into(), include_bytes!("../../res/ethereum/tobalaba.json"))
-}
-
 /// Create a new Musicoin mainnet chain spec.
 pub fn new_musicoin<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	// The musicoin chain spec uses a block reward contract which can be found at
+	// https://gist.github.com/andresilva/6f2afaf9486732a0797f4bdeae018ee9
 	load(params.into(), include_bytes!("../../res/ethereum/musicoin.json"))
 }
 
@@ -87,19 +89,34 @@ pub fn new_social<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
 	load(params.into(), include_bytes!("../../res/ethereum/social.json"))
 }
 
+/// Create a new MIX mainnet chain spec.
+pub fn new_mix<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	load(params.into(), include_bytes!("../../res/ethereum/mix.json"))
+}
+
+/// Create a new Morden testnet chain spec.
+pub fn new_morden<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	load(params.into(), include_bytes!("../../res/ethereum/morden.json"))
+}
+
+/// Create a new Ropsten testnet chain spec.
+pub fn new_ropsten<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	load(params.into(), include_bytes!("../../res/ethereum/ropsten.json"))
+}
+
 /// Create a new Kovan testnet chain spec.
 pub fn new_kovan<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
 	load(params.into(), include_bytes!("../../res/ethereum/kovan.json"))
 }
 
-/// Create a new Foundation Ropsten chain spec.
-pub fn new_ropsten<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
-	load(params.into(), include_bytes!("../../res/ethereum/ropsten.json"))
+/// Create a new POA Sokol testnet chain spec.
+pub fn new_sokol<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	load(params.into(), include_bytes!("../../res/ethereum/poasokol.json"))
 }
 
-/// Create a new Morden chain spec.
-pub fn new_morden<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
-	load(params.into(), include_bytes!("../../res/ethereum/morden.json"))
+/// Create a new Callisto chaun spec
+pub fn new_callisto<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	load(params.into(), include_bytes!("../../res/ethereum/callisto.json"))
 }
 
 // For tests
@@ -142,6 +159,9 @@ pub fn new_frontier_test_machine() -> EthereumMachine { load_machine(include_byt
 /// Create a new Foundation Homestead-era chain spec as though it never changed from Frontier.
 pub fn new_homestead_test_machine() -> EthereumMachine { load_machine(include_bytes!("../../res/ethereum/homestead_test.json")) }
 
+/// Create a new Foundation Homestead-EIP210-era chain spec as though it never changed from Homestead/Frontier.
+pub fn new_eip210_test_machine() -> EthereumMachine { load_machine(include_bytes!("../../res/ethereum/eip210_test.json")) }
+
 /// Create a new Foundation Byzantium era spec.
 pub fn new_byzantium_test_machine() -> EthereumMachine { load_machine(include_bytes!("../../res/ethereum/byzantium_test.json")) }
 
@@ -160,7 +180,8 @@ mod tests {
 	use state::*;
 	use super::*;
 	use test_helpers::get_temp_state_db;
-	use views::BlockView;
+	use types::view;
+	use types::views::BlockView;
 
 	#[test]
 	fn ensure_db_good() {

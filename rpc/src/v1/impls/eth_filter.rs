@@ -1,29 +1,29 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Eth Filter RPC implementation
 
 use std::sync::Arc;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
-use ethcore::miner::{self, MinerService};
-use ethcore::filter::Filter as EthcoreFilter;
 use ethcore::client::{BlockChainClient, BlockId};
+use ethcore::miner::{self, MinerService};
 use ethereum_types::H256;
 use parking_lot::Mutex;
+use types::filter::Filter as EthcoreFilter;
 
 use jsonrpc_core::{BoxFuture, Result};
 use jsonrpc_core::futures::{future, Future};
@@ -153,7 +153,10 @@ impl<T: Filterable + Send + Sync + 'static> EthFilter for T {
 	fn new_block_filter(&self) -> Result<RpcU256> {
 		let mut polls = self.polls().lock();
 		// +1, since we don't want to include the current block
-		let id = polls.create_poll(SyncPollFilter::new(PollFilter::Block(self.best_block_number() + 1)));
+		let id = polls.create_poll(SyncPollFilter::new(PollFilter::Block {
+			last_block_number: self.best_block_number(),
+			recent_reported_hashes: VecDeque::with_capacity(PollFilter::MAX_BLOCK_HISTORY_SIZE),
+		}));
 		Ok(id.into())
 	}
 
@@ -171,15 +174,33 @@ impl<T: Filterable + Send + Sync + 'static> EthFilter for T {
 		};
 
 		Box::new(filter.modify(|filter| match *filter {
-			PollFilter::Block(ref mut block_number) => {
-				// +1, cause we want to return hashes including current block hash.
-				let current_number = self.best_block_number() + 1;
-				let hashes = (*block_number..current_number).into_iter()
-					.map(BlockId::Number)
-					.filter_map(|id| self.block_hash(id).map(Into::into))
-					.collect::<Vec<RpcH256>>();
-
-				*block_number = current_number;
+			PollFilter::Block {
+				ref mut last_block_number,
+				ref mut recent_reported_hashes,
+			} => {
+				// Check validity of recently reported blocks -- in case of re-org, rewind block to last valid
+				while let Some((num, hash)) = recent_reported_hashes.front().cloned() {
+					if self.block_hash(BlockId::Number(num)) == Some(hash) { break; }
+					*last_block_number = num - 1;
+					recent_reported_hashes.pop_front();
+				}
+				let current_number = self.best_block_number();
+				let mut hashes = Vec::new();
+				for n in (*last_block_number + 1)..=current_number {
+					let block_number = BlockId::Number(n);
+					match self.block_hash(block_number) {
+						Some(hash) => {
+							*last_block_number = n;
+							hashes.push(RpcH256::from(hash));
+							// Only keep the most recent history
+							if recent_reported_hashes.len() >= PollFilter::MAX_BLOCK_HISTORY_SIZE {
+								recent_reported_hashes.pop_back();
+							}
+							recent_reported_hashes.push_front((n, hash));
+						},
+						None => (),
+					}
+				}
 
 				Either::A(future::ok(FilterChanges::Hashes(hashes)))
 			},

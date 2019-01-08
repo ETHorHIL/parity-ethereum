@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
 use std::collections::{HashMap, HashSet};
@@ -43,9 +43,10 @@ use network::{NonReservedPeerMode, NetworkContext as NetworkContextTrait};
 use network::{SessionInfo, Error, ErrorKind, DisconnectReason, NetworkProtocolHandler};
 use discovery::{Discovery, TableUpdates, NodeEntry, MAX_DATAGRAM_SIZE};
 use ip_utils::{map_external_address, select_public_address};
-use path::restrict_permissions_owner;
+use parity_path::restrict_permissions_owner;
 use parking_lot::{Mutex, RwLock};
 use network::{ConnectionFilter, ConnectionDirection};
+use connection::PAYLOAD_SOFT_LIMIT;
 
 type Slab<T> = ::slab::Slab<T, usize>;
 
@@ -59,8 +60,9 @@ const TCP_ACCEPT: StreamToken = SYS_TIMER + 1;
 const IDLE: TimerToken = SYS_TIMER + 2;
 const DISCOVERY: StreamToken = SYS_TIMER + 3;
 const DISCOVERY_REFRESH: TimerToken = SYS_TIMER + 4;
-const DISCOVERY_ROUND: TimerToken = SYS_TIMER + 5;
-const NODE_TABLE: TimerToken = SYS_TIMER + 6;
+const FAST_DISCOVERY_REFRESH: TimerToken = SYS_TIMER + 5;
+const DISCOVERY_ROUND: TimerToken = SYS_TIMER + 6;
+const NODE_TABLE: TimerToken = SYS_TIMER + 7;
 const FIRST_SESSION: StreamToken = 0;
 const LAST_SESSION: StreamToken = FIRST_SESSION + MAX_SESSIONS - 1;
 const USER_TIMER: TimerToken = LAST_SESSION + 256;
@@ -71,6 +73,8 @@ const SYS_TIMER: TimerToken = LAST_SESSION + 1;
 const MAINTENANCE_TIMEOUT: Duration = Duration::from_secs(1);
 // for DISCOVERY_REFRESH TimerToken
 const DISCOVERY_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
+// for FAST_DISCOVERY_REFRESH TimerToken
+const FAST_DISCOVERY_REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
 // for DISCOVERY_ROUND TimerToken
 const DISCOVERY_ROUND_TIMEOUT: Duration = Duration::from_millis(300);
 // for NODE_TABLE TimerToken
@@ -102,7 +106,7 @@ pub struct NetworkContext<'s> {
 	sessions: Arc<RwLock<Slab<SharedSession>>>,
 	session: Option<SharedSession>,
 	session_id: Option<StreamToken>,
-	_reserved_peers: &'s HashSet<NodeId>,
+	reserved_peers: &'s HashSet<NodeId>,
 }
 
 impl<'s> NetworkContext<'s> {
@@ -121,7 +125,7 @@ impl<'s> NetworkContext<'s> {
 			session_id: id,
 			session,
 			sessions,
-			_reserved_peers: reserved_peers,
+			reserved_peers: reserved_peers,
 		}
 	}
 
@@ -190,6 +194,17 @@ impl<'s> NetworkContextTrait for NetworkContext<'s> {
 	}
 
 	fn subprotocol_name(&self) -> ProtocolId { self.protocol }
+
+	fn is_reserved_peer(&self, peer: PeerId) -> bool {
+		self.session_info(peer)
+			.and_then(|info| info.id)
+			.map(|node| self.reserved_peers.contains(&node))
+			.unwrap_or(false)
+	}
+
+	fn payload_soft_limit(&self) -> usize {
+		PAYLOAD_SOFT_LIMIT
+	}
 }
 
 /// Shared host information
@@ -471,10 +486,10 @@ impl Host {
 			let socket = UdpSocket::bind(&udp_addr).expect("Error binding UDP socket");
 			*self.udp_socket.lock() = Some(socket);
 
-			discovery.init_node_list(self.nodes.read().entries());
 			discovery.add_node_list(self.nodes.read().entries());
 			*self.discovery.lock() = Some(discovery);
 			io.register_stream(DISCOVERY)?;
+			io.register_timer(FAST_DISCOVERY_REFRESH, FAST_DISCOVERY_REFRESH_TIMEOUT)?;
 			io.register_timer(DISCOVERY_REFRESH, DISCOVERY_REFRESH_TIMEOUT)?;
 			io.register_timer(DISCOVERY_ROUND, DISCOVERY_ROUND_TIMEOUT)?;
 		}
@@ -524,6 +539,18 @@ impl Host {
 			trace!(target: "network", "Ping timeout: {}", p);
 			self.kill_connection(p, io, true);
 		}
+	}
+
+	fn has_enough_peers(&self) -> bool {
+		let min_peers = {
+			let info = self.info.read();
+			let config = &info.config;
+
+			config.min_peers
+		};
+		let (_, egress_count, ingress_count) = self.session_count();
+
+		return egress_count + ingress_count >= min_peers as usize;
 	}
 
 	fn connect_peers(&self, io: &IoContext<NetworkIoMessage>) {
@@ -729,11 +756,14 @@ impl Host {
 							let max_ingress = max(max_peers - min_peers, min_peers / 2);
 							if reserved_only ||
 								(s.info.originated && egress_count > min_peers) ||
-								(!s.info.originated && ingress_count > max_ingress) && !self.reserved_nodes.read().contains(&id) {
-								// only proceed if the connecting peer is reserved.
-								s.disconnect(io, DisconnectReason::TooManyPeers);
-								kill = true;
-								break;
+								(!s.info.originated && ingress_count > max_ingress) {
+								if !self.reserved_nodes.read().contains(&id) {
+									// only proceed if the connecting peer is reserved.
+									trace!(target: "network", "Disconnecting non-reserved peer {:?}", id);
+									s.disconnect(io, DisconnectReason::TooManyPeers);
+									kill = true;
+									break;
+								}
 							}
 
 							if !self.filter.as_ref().map_or(true, |f| f.connection_allowed(&self_id, &id, ConnectionDirection::Inbound)) {
@@ -1007,16 +1037,23 @@ impl IoHandler<NetworkIoMessage> for Host {
 			IDLE => self.maintain_network(io),
 			FIRST_SESSION ... LAST_SESSION => self.connection_timeout(token, io),
 			DISCOVERY_REFRESH => {
-				if let Some(d) = self.discovery.lock().as_mut() {
-					d.refresh();
-                                }
+				// Run the _slow_ discovery if enough peers are connected
+				if !self.has_enough_peers() {
+					return;
+				}
+				self.discovery.lock().as_mut().map(|d| d.refresh());
+				io.update_registration(DISCOVERY).unwrap_or_else(|e| debug!("Error updating discovery registration: {:?}", e));
+			},
+			FAST_DISCOVERY_REFRESH => {
+				// Run the fast discovery if not enough peers are connected
+				if self.has_enough_peers() {
+					return;
+				}
+				self.discovery.lock().as_mut().map(|d| d.refresh());
 				io.update_registration(DISCOVERY).unwrap_or_else(|e| debug!("Error updating discovery registration: {:?}", e));
 			},
 			DISCOVERY_ROUND => {
-				let node_changes = { self.discovery.lock().as_mut().and_then(|d| d.round()) };
-				if let Some(node_changes) = node_changes {
-					self.update_nodes(io, node_changes);
-				}
+				self.discovery.lock().as_mut().map(|d| d.round());
 				io.update_registration(DISCOVERY).unwrap_or_else(|e| debug!("Error updating discovery registration: {:?}", e));
 			},
 			NODE_TABLE => {

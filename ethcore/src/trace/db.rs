@@ -1,32 +1,34 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Trace database.
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
-use blockchain::{BlockChainDB};
-use heapsize::HeapSizeOf;
+
+use blockchain::BlockChainDB;
+use db::cache_manager::CacheManager;
+use db::{self, Key, Writable, Readable, CacheUpdatePolicy};
 use ethereum_types::{H256, H264};
+use heapsize::HeapSizeOf;
 use kvdb::{DBTransaction};
 use parking_lot::RwLock;
-use header::BlockNumber;
+use types::BlockNumber;
+
 use trace::{LocalizedTrace, Config, Filter, Database as TraceDatabase, ImportRequest, DatabaseExtras};
-use db::{self, Key, Writable, Readable, CacheUpdatePolicy};
-use super::flat::{FlatTrace, FlatBlockTraces, FlatTransactionTraces};
-use cache_manager::CacheManager;
+use trace::flat::{FlatTrace, FlatBlockTraces, FlatTransactionTraces};
 
 const TRACE_DB_VER: &'static [u8] = b"1.0";
 
@@ -227,13 +229,12 @@ impl<T> TraceDatabase for TraceDB<T> where T: DatabaseExtras {
 	}
 
 	fn trace(&self, block_number: BlockNumber, tx_position: usize, trace_position: Vec<usize>) -> Option<LocalizedTrace> {
-		let trace_position_deq = VecDeque::from(trace_position);
 		self.extras.block_hash(block_number)
 			.and_then(|block_hash| self.transactions_traces(&block_hash)
 				.and_then(|traces| traces.into_iter().nth(tx_position))
 				.map(Into::<Vec<FlatTrace>>::into)
 				// this may and should be optimized
-				.and_then(|traces| traces.into_iter().find(|trace| trace.trace_address == trace_position_deq))
+				.and_then(|traces| traces.into_iter().find(|trace| trace.trace_address == trace_position))
 				.map(|trace| {
 					let tx_hash = self.extras.transaction_hash(block_number, tx_position)
 						.expect("Expected to find transaction hash. Database is probably corrupted");
@@ -334,7 +335,7 @@ mod tests {
 	use std::sync::Arc;
 	use ethereum_types::{H256, U256, Address};
 	use kvdb::{DBTransaction};
-	use header::BlockNumber;
+	use types::BlockNumber;
 	use trace::{Config, TraceDB, Database as TraceDatabase, DatabaseExtras, ImportRequest};
 	use trace::{Filter, LocalizedTrace, AddressesFilter, TraceError};
 	use trace::trace::{Call, Action, Res};

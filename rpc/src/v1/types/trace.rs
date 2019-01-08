@@ -1,29 +1,31 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::BTreeMap;
-use serde::{Serialize, Serializer};
-use serde::ser::SerializeStruct;
-use ethcore::trace::{FlatTrace, LocalizedTrace as EthLocalizedTrace, trace, TraceError};
-use ethcore::trace as et;
-use ethcore::state_diff;
-use ethcore::account_diff;
+
 use ethcore::client::Executed;
+use ethcore::trace as et;
+use ethcore::trace::{FlatTrace, LocalizedTrace as EthLocalizedTrace, trace, TraceError};
 use ethereum_types::H256 as EthH256;
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
+use types::account_diff;
+use types::state_diff;
 use vm;
+
 use v1::types::{Bytes, H160, H256, U256};
 
 #[derive(Debug, Serialize)]
@@ -66,15 +68,12 @@ impl From<et::StorageDiff> for StorageDiff {
 /// A record of an executed VM operation.
 pub struct VMExecutedOperation {
 	/// The total gas used.
-	#[serde(rename="used")]
 	pub used: u64,
 	/// The stack item placed, if any.
 	pub push: Vec<U256>,
 	/// If altered, the memory delta.
-	#[serde(rename="mem")]
 	pub mem: Option<MemoryDiff>,
 	/// The altered storage value, if any.
-	#[serde(rename="store")]
 	pub store: Option<StorageDiff>,
 }
 
@@ -155,13 +154,13 @@ pub struct ChangedType<T> where T: Serialize {
 #[derive(Debug, Serialize)]
 /// Serde-friendly `Diff` shadow.
 pub enum Diff<T> where T: Serialize {
-	#[serde(rename="=")]
+	#[serde(rename = "=")]
 	Same,
-	#[serde(rename="+")]
+	#[serde(rename = "+")]
 	Born(T),
-	#[serde(rename="-")]
+	#[serde(rename = "-")]
 	Died(T),
-	#[serde(rename="*")]
+	#[serde(rename = "*")]
 	Changed(ChangedType<T>),
 }
 
@@ -239,21 +238,17 @@ impl From<trace::Create> for Create {
 
 /// Call type.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum CallType {
 	/// None
-	#[serde(rename="none")]
 	None,
 	/// Call
-	#[serde(rename="call")]
 	Call,
 	/// Call code
-	#[serde(rename="callcode")]
 	CallCode,
 	/// Delegate call
-	#[serde(rename="delegatecall")]
 	DelegateCall,
 	/// Static call
-	#[serde(rename="staticcall")]
 	StaticCall,
 }
 
@@ -271,6 +266,7 @@ impl From<vm::CallType> for CallType {
 
 /// Call response
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Call {
 	/// Sender
 	from: H160,
@@ -283,7 +279,6 @@ pub struct Call {
 	/// Input data
 	input: Bytes,
 	/// The type of the call.
-	#[serde(rename="callType")]
 	call_type: CallType,
 }
 
@@ -302,18 +297,15 @@ impl From<trace::Call> for Call {
 
 /// Reward type.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum RewardType {
 	/// Block
-	#[serde(rename="block")]
 	Block,
 	/// Uncle
-	#[serde(rename="uncle")]
 	Uncle,
 	/// EmptyStep (AuthorityRound)
-	#[serde(rename="emptyStep")]
 	EmptyStep,
 	/// External (attributed as part of an external protocol)
-	#[serde(rename="external")]
 	External,
 }
 
@@ -330,13 +322,13 @@ impl From<trace::RewardType> for RewardType {
 
 /// Reward action
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Reward {
 	/// Author's address.
 	pub author: H160,
 	/// Reward amount.
 	pub value: U256,
 	/// Reward type.
-	#[serde(rename="rewardType")]
 	pub reward_type: RewardType,
 }
 
@@ -352,11 +344,11 @@ impl From<trace::Reward> for Reward {
 
 /// Suicide
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Suicide {
 	/// Address.
 	pub address: H160,
 	/// Refund address.
-	#[serde(rename="refundAddress")]
 	pub refund_address: H160,
 	/// Balance.
 	pub balance: U256,
@@ -398,9 +390,9 @@ impl From<trace::Action> for Action {
 
 /// Call Result
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CallResult {
 	/// Gas used
-	#[serde(rename="gasUsed")]
 	gas_used: U256,
 	/// Output bytes
 	output: Bytes,
@@ -417,9 +409,9 @@ impl From<trace::CallResult> for CallResult {
 
 /// Craete Result
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateResult {
 	/// Gas used
-	#[serde(rename="gasUsed")]
 	gas_used: U256,
 	/// Code
 	code: Bytes,
@@ -607,6 +599,7 @@ impl From<FlatTrace> for Trace {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 /// A diff of some chunk of memory.
 pub struct TraceResults {
 	/// The output of the call/create
@@ -614,10 +607,8 @@ pub struct TraceResults {
 	/// The transaction trace.
 	pub trace: Vec<Trace>,
 	/// The transaction trace.
-	#[serde(rename="vmTrace")]
 	pub vm_trace: Option<VMTrace>,
 	/// The transaction trace.
-	#[serde(rename="stateDiff")]
 	pub state_diff: Option<StateDiff>,
 }
 
@@ -633,6 +624,7 @@ impl From<Executed> for TraceResults {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 /// A diff of some chunk of memory.
 pub struct TraceResultsWithTransactionHash {
 	/// The output of the call/create
@@ -640,13 +632,10 @@ pub struct TraceResultsWithTransactionHash {
 	/// The transaction trace.
 	pub trace: Vec<Trace>,
 	/// The transaction trace.
-	#[serde(rename="vmTrace")]
 	pub vm_trace: Option<VMTrace>,
 	/// The transaction trace.
-	#[serde(rename="stateDiff")]
 	pub state_diff: Option<StateDiff>,
 	/// The transaction Hash.
-	#[serde(rename="transactionHash")]
 	pub transaction_hash: H256,
 }
 

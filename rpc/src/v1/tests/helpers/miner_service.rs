@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Test implementation of miner service.
 
@@ -21,21 +21,23 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bytes::Bytes;
 use ethcore::account_provider::SignError as AccountError;
-use ethcore::block::{Block, SealedBlock, IsBlock};
+use ethcore::block::{SealedBlock, IsBlock};
 use ethcore::client::{Nonce, PrepareOpenBlock, StateClient, EngineInfo};
 use ethcore::engines::EthEngine;
 use ethcore::error::Error;
-use ethcore::header::{BlockNumber, Header};
-use ethcore::ids::BlockId;
 use ethcore::miner::{self, MinerService, AuthoringParams};
-use ethcore::receipt::{Receipt, RichReceipt};
 use ethereum_types::{H256, U256, Address};
+use ethkey::Password;
 use miner::pool::local_transactions::Status as LocalTransactionStatus;
 use miner::pool::{verifier, VerifiedTransaction, QueueStatus};
 use parking_lot::{RwLock, Mutex};
-use transaction::{self, UnverifiedTransaction, SignedTransaction, PendingTransaction};
+use types::transaction::{self, UnverifiedTransaction, SignedTransaction, PendingTransaction};
 use txpool;
-use ethkey::Password;
+use types::BlockNumber;
+use types::block::Block;
+use types::header::Header;
+use types::ids::BlockId;
+use types::receipt::RichReceipt;
 
 /// Test miner service.
 pub struct TestMinerService {
@@ -46,7 +48,7 @@ pub struct TestMinerService {
 	/// Pre-existed local transactions
 	pub local_transactions: Mutex<BTreeMap<H256, LocalTransactionStatus>>,
 	/// Pre-existed pending receipts
-	pub pending_receipts: Mutex<BTreeMap<H256, Receipt>>,
+	pub pending_receipts: Mutex<Vec<RichReceipt>>,
 	/// Next nonces.
 	pub next_nonces: RwLock<HashMap<Address, U256>>,
 	/// Password held by Engine.
@@ -58,11 +60,11 @@ pub struct TestMinerService {
 impl Default for TestMinerService {
 	fn default() -> TestMinerService {
 		TestMinerService {
-			imported_transactions: Mutex::new(Vec::new()),
-			pending_transactions: Mutex::new(HashMap::new()),
-			local_transactions: Mutex::new(BTreeMap::new()),
-			pending_receipts: Mutex::new(BTreeMap::new()),
-			next_nonces: RwLock::new(HashMap::new()),
+			imported_transactions: Default::default(),
+			pending_transactions: Default::default(),
+			local_transactions: Default::default(),
+			pending_receipts: Default::default(),
+			next_nonces: Default::default(),
 			password: RwLock::new("".into()),
 			authoring_params: RwLock::new(AuthoringParams {
 				author: Address::zero(),
@@ -78,7 +80,7 @@ impl TestMinerService {
 	pub fn increment_nonce(&self, address: &Address) {
 		let mut next_nonces = self.next_nonces.write();
 		let nonce = next_nonces.entry(*address).or_insert_with(|| 0.into());
-		*nonce = *nonce + 1.into();
+		*nonce = *nonce + 1;
 	}
 }
 
@@ -230,23 +232,11 @@ impl MinerService for TestMinerService {
 		}).collect()
 	}
 
-	fn pending_receipt(&self, _best_block: BlockNumber, hash: &H256) -> Option<RichReceipt> {
-		// Not much point implementing this since the logic is complex and the only thing it relies on is pending_receipts, which is already tested.
-		self.pending_receipts(0).unwrap().get(hash).map(|r|
-			RichReceipt {
-				transaction_hash: Default::default(),
-				transaction_index: Default::default(),
-				cumulative_gas_used: r.gas_used.clone(),
-				gas_used: r.gas_used.clone(),
-				contract_address: None,
-				logs: r.logs.clone(),
-				log_bloom: r.log_bloom,
-				outcome: r.outcome.clone(),
-			}
-		)
+	fn queued_transaction_hashes(&self) -> Vec<H256> {
+		self.pending_transactions.lock().keys().cloned().map(|hash| hash).collect()
 	}
 
-	fn pending_receipts(&self, _best_block: BlockNumber) -> Option<BTreeMap<H256, Receipt>> {
+	fn pending_receipts(&self, _best_block: BlockNumber) -> Option<Vec<RichReceipt>> {
 		Some(self.pending_receipts.lock().clone())
 	}
 

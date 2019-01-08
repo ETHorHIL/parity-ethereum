@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Test client.
 
@@ -20,51 +20,55 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrder};
 use std::sync::Arc;
 use std::collections::{HashMap, BTreeMap};
 use std::mem;
-use itertools::Itertools;
-use rustc_hex::FromHex;
-use hash::keccak;
+
+use blockchain::{TreeRoute, BlockReceipts};
+use bytes::Bytes;
+use db::{NUM_COLUMNS, COL_STATE};
+use ethcore_miner::pool::VerifiedTransaction;
 use ethereum_types::{H256, U256, Address};
-use parking_lot::RwLock;
-use journaldb;
+use ethkey::{Generator, Random};
+use ethtrie;
+use hash::keccak;
+use itertools::Itertools;
 use kvdb::DBValue;
 use kvdb_memorydb;
-use bytes::Bytes;
+use parking_lot::RwLock;
 use rlp::{Rlp, RlpStream};
-use ethkey::{Generator, Random};
-use ethcore_miner::pool::VerifiedTransaction;
-use transaction::{self, Transaction, LocalizedTransaction, SignedTransaction, Action};
-use blockchain::{TreeRoute, BlockReceipts};
+use rustc_hex::FromHex;
+use types::transaction::{self, Transaction, LocalizedTransaction, SignedTransaction, Action};
+use types::BlockNumber;
+use types::basic_account::BasicAccount;
+use types::encoded;
+use types::filter::Filter;
+use types::header::Header;
+use types::log_entry::LocalizedLogEntry;
+use types::pruning_info::PruningInfo;
+use types::receipt::{Receipt, LocalizedReceipt, TransactionOutcome};
+use types::view;
+use types::views::BlockView;
+use vm::Schedule;
+
+use block::{OpenBlock, SealedBlock, ClosedBlock};
 use client::{
 	Nonce, Balance, ChainInfo, BlockInfo, ReopenBlock, CallContract, TransactionInfo, RegistryInfo,
 	PrepareOpenBlock, BlockChainClient, BlockChainInfo, BlockStatus, BlockId, Mode,
-	TransactionId, UncleId, TraceId, TraceFilter, LastHashes, CallAnalytics, BlockImportError,
+	TransactionId, UncleId, TraceId, TraceFilter, LastHashes, CallAnalytics,
 	ProvingBlockChainClient, ScheduleInfo, ImportSealedBlock, BroadcastProposalBlock, ImportBlock, StateOrBlock,
-	Call, StateClient, EngineInfo, AccountData, BlockChain, BlockProducer, SealedBlockImporter, IoClient
+	Call, StateClient, EngineInfo, AccountData, BlockChain, BlockProducer, SealedBlockImporter, IoClient,
+	BadBlocks,
 };
-use db::{NUM_COLUMNS, COL_STATE};
-use header::{Header as BlockHeader, BlockNumber};
-use filter::Filter;
-use log_entry::LocalizedLogEntry;
-use receipt::{Receipt, LocalizedReceipt, TransactionOutcome};
-use error::{Error, ImportResult};
-use vm::Schedule;
+use engines::EthEngine;
+use error::{Error, EthcoreResult};
+use executed::CallError;
+use executive::Executed;
+use journaldb;
 use miner::{self, Miner, MinerService};
 use spec::Spec;
-use types::basic_account::BasicAccount;
-use types::pruning_info::PruningInfo;
+use state::StateInfo;
+use state_db::StateDB;
+use trace::LocalizedTrace;
 use verification::queue::QueueInfo;
 use verification::queue::kind::blocks::Unverified;
-use block::{OpenBlock, SealedBlock, ClosedBlock};
-use executive::Executed;
-use error::CallError;
-use trace::LocalizedTrace;
-use state_db::StateDB;
-use header::Header;
-use encoded;
-use engines::EthEngine;
-use ethtrie;
-use state::StateInfo;
-use views::BlockView;
 
 /// Test client.
 pub struct TestBlockChainClient {
@@ -117,7 +121,7 @@ pub struct TestBlockChainClient {
 }
 
 /// Used for generating test client blocks.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum EachBlockWith {
 	/// Plain block.
 	Nothing,
@@ -125,6 +129,8 @@ pub enum EachBlockWith {
 	Uncle,
 	/// Block with a transaction.
 	Transaction,
+	/// Block with multiple transactions.
+	Transactions(usize),
 	/// Block with an uncle and transaction.
 	UncleAndTransaction
 }
@@ -241,75 +247,84 @@ impl TestBlockChainClient {
 		*self.error_on_logs.write() = val;
 	}
 
-	/// Add blocks to test client.
-	pub fn add_blocks(&self, count: usize, with: EachBlockWith) {
-		let len = self.numbers.read().len();
-		for n in len..(len + count) {
-			let mut header = BlockHeader::new();
-			header.set_difficulty(From::from(n));
-			header.set_parent_hash(self.last_hash.read().clone());
-			header.set_number(n as BlockNumber);
-			header.set_gas_limit(U256::from(1_000_000));
-			header.set_extra_data(self.extra_data.clone());
-			let uncles = match with {
-				EachBlockWith::Uncle | EachBlockWith::UncleAndTransaction => {
-					let mut uncles = RlpStream::new_list(1);
-					let mut uncle_header = BlockHeader::new();
-					uncle_header.set_difficulty(From::from(n));
-					uncle_header.set_parent_hash(self.last_hash.read().clone());
-					uncle_header.set_number(n as BlockNumber);
-					uncles.append(&uncle_header);
-					header.set_uncles_hash(keccak(uncles.as_raw()));
-					uncles
-				},
-				_ => RlpStream::new_list(0)
-			};
-			let txs = match with {
-				EachBlockWith::Transaction | EachBlockWith::UncleAndTransaction => {
-					let mut txs = RlpStream::new_list(1);
-					let keypair = Random.generate().unwrap();
+	/// Add a block to test client.
+	pub fn add_block<F>(&self, with: EachBlockWith, hook: F)
+		where F: Fn(Header) -> Header
+	{
+		let n = self.numbers.read().len();
+
+		let mut header = Header::new();
+		header.set_difficulty(From::from(n));
+		header.set_parent_hash(self.last_hash.read().clone());
+		header.set_number(n as BlockNumber);
+		header.set_gas_limit(U256::from(1_000_000));
+		header.set_extra_data(self.extra_data.clone());
+
+		header = hook(header);
+
+		let uncles = match with {
+			EachBlockWith::Uncle | EachBlockWith::UncleAndTransaction => {
+				let mut uncles = RlpStream::new_list(1);
+				let mut uncle_header = Header::new();
+				uncle_header.set_difficulty(From::from(n));
+				uncle_header.set_parent_hash(self.last_hash.read().clone());
+				uncle_header.set_number(n as BlockNumber);
+				uncles.append(&uncle_header);
+				header.set_uncles_hash(keccak(uncles.as_raw()));
+				uncles
+			},
+			_ => RlpStream::new_list(0)
+		};
+		let txs = match with {
+			EachBlockWith::Transaction | EachBlockWith::UncleAndTransaction | EachBlockWith::Transactions(_) => {
+				let num_transactions = match with {
+					EachBlockWith::Transactions(num) => num,
+					_ => 1,
+				};
+				let mut txs = RlpStream::new_list(num_transactions);
+				let keypair = Random.generate().unwrap();
+				let mut nonce = U256::zero();
+
+				for _ in 0..num_transactions {
 					// Update nonces value
-					self.nonces.write().insert(keypair.address(), U256::one());
 					let tx = Transaction {
 						action: Action::Create,
 						value: U256::from(100),
 						data: "3331600055".from_hex().unwrap(),
 						gas: U256::from(100_000),
 						gas_price: U256::from(200_000_000_000u64),
-						nonce: U256::zero()
+						nonce: nonce
 					};
 					let signed_tx = tx.sign(keypair.secret(), None);
 					txs.append(&signed_tx);
-					txs.out()
-				},
-				_ => ::rlp::EMPTY_LIST_RLP.to_vec()
-			};
+					nonce += U256::one();
+				}
 
-			let mut rlp = RlpStream::new_list(3);
-			rlp.append(&header);
-			rlp.append_raw(&txs, 1);
-			rlp.append_raw(uncles.as_raw(), 1);
-			let unverified = Unverified::from_rlp(rlp.out()).unwrap();
-			self.import_block(unverified).unwrap();
-		}
-	}
+				self.nonces.write().insert(keypair.address(), nonce);
+				txs.out()
+			},
+			_ => ::rlp::EMPTY_LIST_RLP.to_vec()
+		};
 
-	/// Make a bad block by setting invalid extra data.
-	pub fn corrupt_block(&self, n: BlockNumber) {
-		let hash = self.block_hash(BlockId::Number(n)).unwrap();
-		let mut header: BlockHeader = self.block_header(BlockId::Number(n)).unwrap().decode().expect("decoding failed");
-		header.set_extra_data(b"This extra data is way too long to be considered valid".to_vec());
 		let mut rlp = RlpStream::new_list(3);
 		rlp.append(&header);
-		rlp.append_raw(&::rlp::NULL_RLP, 1);
-		rlp.append_raw(&::rlp::NULL_RLP, 1);
-		self.blocks.write().insert(hash, rlp.out());
+		rlp.append_raw(&txs, 1);
+		rlp.append_raw(uncles.as_raw(), 1);
+		let unverified = Unverified::from_rlp(rlp.out()).unwrap();
+		self.import_block(unverified).unwrap();
+	}
+
+	/// Add a sequence of blocks to test client.
+	pub fn add_blocks(&self, count: usize, with: EachBlockWith) {
+		for _ in 0..count {
+			self.add_block(with, |header| header);
+		}
 	}
 
 	/// Make a bad block by setting invalid parent hash.
 	pub fn corrupt_block_parent(&self, n: BlockNumber) {
 		let hash = self.block_hash(BlockId::Number(n)).unwrap();
-		let mut header: BlockHeader = self.block_header(BlockId::Number(n)).unwrap().decode().expect("decoding failed");
+		let mut header: Header = self.block_header(BlockId::Number(n)).unwrap().decode().expect("decoding failed");
 		header.set_parent_hash(H256::from(42));
 		let mut rlp = RlpStream::new_list(3);
 		rlp.append(&header);
@@ -415,7 +430,7 @@ impl ScheduleInfo for TestBlockChainClient {
 }
 
 impl ImportSealedBlock for TestBlockChainClient {
-	fn import_sealed_block(&self, _block: SealedBlock) -> ImportResult {
+	fn import_sealed_block(&self, _block: SealedBlock) -> EthcoreResult<H256> {
 		Ok(H256::default())
 	}
 }
@@ -522,7 +537,7 @@ impl RegistryInfo for TestBlockChainClient {
 }
 
 impl ImportBlock for TestBlockChainClient {
-	fn import_block(&self, unverified: Unverified) -> Result<H256, BlockImportError> {
+	fn import_block(&self, unverified: Unverified) -> EthcoreResult<H256> {
 		let header = unverified.header;
 		let h = header.hash();
 		let number: usize = header.number() as usize;
@@ -615,6 +630,19 @@ impl EngineInfo for TestBlockChainClient {
 	}
 }
 
+impl BadBlocks for TestBlockChainClient {
+	fn bad_blocks(&self) -> Vec<(Unverified, String)> {
+		vec![
+			(Unverified {
+				header: Default::default(),
+				transactions: vec![],
+				uncles: vec![],
+				bytes: vec![1, 2, 3],
+			}, "Invalid block".into())
+		]
+	}
+}
+
 impl BlockChainClient for TestBlockChainClient {
 	fn replay(&self, _id: TransactionId, _analytics: CallAnalytics) -> Result<Executed, CallError> {
 		self.execution_result.read().clone().unwrap()
@@ -671,6 +699,10 @@ impl BlockChainClient for TestBlockChainClient {
 
 	fn transaction_receipt(&self, id: TransactionId) -> Option<LocalizedReceipt> {
 		self.receipts.read().get(&id).cloned()
+	}
+
+	fn localized_block_receipts(&self, _id: BlockId) -> Option<Vec<LocalizedReceipt>> {
+		Some(self.receipts.read().values().cloned().collect())
 	}
 
 	fn logs(&self, filter: Filter) -> Result<Vec<LocalizedLogEntry>, BlockId> {
@@ -772,16 +804,14 @@ impl BlockChainClient for TestBlockChainClient {
 		None
 	}
 
-	fn block_receipts(&self, hash: &H256) -> Option<Bytes> {
+	fn block_receipts(&self, hash: &H256) -> Option<BlockReceipts> {
 		// starts with 'f' ?
 		if *hash > H256::from("f000000000000000000000000000000000000000000000000000000000000000") {
 			let receipt = BlockReceipts::new(vec![Receipt::new(
 				TransactionOutcome::StateRoot(H256::zero()),
 				U256::zero(),
 				vec![])]);
-			let mut rlp = RlpStream::new();
-			rlp.append(&receipt);
-			return Some(rlp.out());
+			return Some(receipt);
 		}
 		None
 	}
@@ -860,8 +890,6 @@ impl BlockChainClient for TestBlockChainClient {
 	}
 
 	fn registrar_address(&self) -> Option<Address> { None }
-
-	fn eip86_transition(&self) -> u64 { u64::max_value() }
 }
 
 impl IoClient for TestBlockChainClient {
@@ -871,7 +899,7 @@ impl IoClient for TestBlockChainClient {
 		self.miner.import_external_transactions(self, txs);
 	}
 
-	fn queue_ancient_block(&self, unverified: Unverified, _r: Bytes) -> Result<H256, BlockImportError> {
+	fn queue_ancient_block(&self, unverified: Unverified, _r: Bytes) -> EthcoreResult<H256> {
 		self.import_block(unverified)
 	}
 
@@ -922,7 +950,7 @@ impl super::traits::EngineClient for TestBlockChainClient {
 		BlockChainClient::block_number(self, id)
 	}
 
-	fn block_header(&self, id: BlockId) -> Option<::encoded::Header> {
+	fn block_header(&self, id: BlockId) -> Option<encoded::Header> {
 		BlockChainClient::block_header(self, id)
 	}
 }

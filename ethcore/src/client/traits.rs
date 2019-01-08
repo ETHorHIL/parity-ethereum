@@ -1,56 +1,55 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use blockchain::{BlockReceipts, TreeRoute};
+use bytes::Bytes;
+use ethcore_miner::pool::VerifiedTransaction;
+use ethereum_types::{H256, U256, Address};
+use evm::Schedule;
 use itertools::Itertools;
+use kvdb::DBValue;
+use types::transaction::{self, LocalizedTransaction, SignedTransaction};
+use types::BlockNumber;
+use types::basic_account::BasicAccount;
+use types::block_status::BlockStatus;
+use types::blockchain_info::BlockChainInfo;
+use types::call_analytics::CallAnalytics;
+use types::encoded;
+use types::filter::Filter;
+use types::header::Header;
+use types::ids::*;
+use types::log_entry::LocalizedLogEntry;
+use types::pruning_info::PruningInfo;
+use types::receipt::LocalizedReceipt;
+use types::trace_filter::Filter as TraceFilter;
+use vm::LastHashes;
 
 use block::{OpenBlock, SealedBlock, ClosedBlock};
-use blockchain::TreeRoute;
 use client::Mode;
-use encoded;
-use vm::LastHashes;
-use error::{Error, ImportResult, CallError, BlockImportError};
-use evm::Schedule;
+use engines::EthEngine;
+use error::{Error, EthcoreResult};
+use executed::CallError;
 use executive::Executed;
-use filter::Filter;
-use header::{BlockNumber};
-use log_entry::LocalizedLogEntry;
-use receipt::LocalizedReceipt;
+use state::StateInfo;
 use trace::LocalizedTrace;
-use transaction::{self, LocalizedTransaction, SignedTransaction};
 use verification::queue::QueueInfo as BlockQueueInfo;
 use verification::queue::kind::blocks::Unverified;
-use state::StateInfo;
-use header::Header;
-use engines::EthEngine;
-
-use ethereum_types::{H256, U256, Address};
-use ethcore_miner::pool::VerifiedTransaction;
-use bytes::Bytes;
-use hashdb::DBValue;
-
-use types::ids::*;
-use types::basic_account::BasicAccount;
-use types::trace_filter::Filter as TraceFilter;
-use types::call_analytics::CallAnalytics;
-use types::blockchain_info::BlockChainInfo;
-use types::block_status::BlockStatus;
-use types::pruning_info::PruningInfo;
 
 /// State information to be used during client query
 pub enum StateOrBlock {
@@ -168,7 +167,7 @@ pub trait RegistryInfo {
 /// Provides methods to import block into blockchain
 pub trait ImportBlock {
 	/// Import a block into the blockchain.
-	fn import_block(&self, block: Unverified) -> Result<H256, BlockImportError>;
+	fn import_block(&self, block: Unverified) -> EthcoreResult<H256>;
 }
 
 /// Provides `call_contract` method
@@ -205,15 +204,21 @@ pub trait IoClient: Sync + Send {
 	fn queue_transactions(&self, transactions: Vec<Bytes>, peer_id: usize);
 
 	/// Queue block import with transaction receipts. Does no sealing and transaction validation.
-	fn queue_ancient_block(&self, block_bytes: Unverified, receipts_bytes: Bytes) -> Result<H256, BlockImportError>;
+	fn queue_ancient_block(&self, block_bytes: Unverified, receipts_bytes: Bytes) -> EthcoreResult<H256>;
 
 	/// Queue conensus engine message.
 	fn queue_consensus_message(&self, message: Bytes);
 }
 
+/// Provides recently seen bad blocks.
+pub trait BadBlocks {
+	/// Returns a list of blocks that were recently not imported because they were invalid.
+	fn bad_blocks(&self) -> Vec<(Unverified, String)>;
+}
+
 /// Blockchain database client. Owns and manages a blockchain and a block queue.
 pub trait BlockChainClient : Sync + Send + AccountData + BlockChain + CallContract + RegistryInfo + ImportBlock
-+ IoClient {
++ IoClient + BadBlocks {
 	/// Look up the block number for the given block ID.
 	fn block_number(&self, id: BlockId) -> Option<BlockNumber>;
 
@@ -275,6 +280,9 @@ pub trait BlockChainClient : Sync + Send + AccountData + BlockChain + CallContra
 	/// Get transaction receipt with given hash.
 	fn transaction_receipt(&self, id: TransactionId) -> Option<LocalizedReceipt>;
 
+	/// Get localized receipts for all transaction in given block.
+	fn localized_block_receipts(&self, id: BlockId) -> Option<Vec<LocalizedReceipt>>;
+
 	/// Get a tree route between `from` and `to`.
 	/// See `BlockChain::tree_route`.
 	fn tree_route(&self, from: &H256, to: &H256) -> Option<TreeRoute>;
@@ -285,11 +293,16 @@ pub trait BlockChainClient : Sync + Send + AccountData + BlockChain + CallContra
 	/// Get latest state node
 	fn state_data(&self, hash: &H256) -> Option<Bytes>;
 
-	/// Get raw block receipts data by block header hash.
-	fn block_receipts(&self, hash: &H256) -> Option<Bytes>;
+	/// Get block receipts data by block header hash.
+	fn block_receipts(&self, hash: &H256) -> Option<BlockReceipts>;
 
 	/// Get block queue information.
 	fn queue_info(&self) -> BlockQueueInfo;
+
+	/// Returns true if block queue is empty.
+	fn is_queue_empty(&self) -> bool {
+		self.queue_info().is_empty()
+	}
 
 	/// Clear block queue and abort all import activity.
 	fn clear_queue(&self);
@@ -378,9 +391,6 @@ pub trait BlockChainClient : Sync + Send + AccountData + BlockChain + CallContra
 
 	/// Get the address of the registry itself.
 	fn registrar_address(&self) -> Option<Address>;
-
-	/// Get the EIP-86 transition block number.
-	fn eip86_transition(&self) -> u64;
 }
 
 /// Provides `reopen_block` method
@@ -411,7 +421,7 @@ pub trait ScheduleInfo {
 ///Provides `import_sealed_block` method
 pub trait ImportSealedBlock {
 	/// Import sealed block. Skips all verifications.
-	fn import_sealed_block(&self, block: SealedBlock) -> ImportResult;
+	fn import_sealed_block(&self, block: SealedBlock) -> EthcoreResult<H256>;
 }
 
 /// Provides `broadcast_proposal_block` method

@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 #![warn(missing_docs)]
 
@@ -33,21 +33,23 @@ use std::sync::Arc;
 use std::collections::{BTreeSet, BTreeMap};
 
 use bytes::Bytes;
-use ethereum_types::{H256, U256, Address};
 use ethcore_miner::pool::{VerifiedTransaction, QueueStatus, local_transactions};
+use ethereum_types::{H256, U256, Address};
+use ethkey::Password;
+use types::transaction::{self, UnverifiedTransaction, SignedTransaction, PendingTransaction};
+use types::BlockNumber;
+use types::block::Block;
+use types::header::Header;
+use types::receipt::RichReceipt;
 
-use block::{Block, SealedBlock};
+use block::SealedBlock;
 use client::{
 	CallContract, RegistryInfo, ScheduleInfo,
 	BlockChain, BlockProducer, SealedBlockImporter, ChainInfo,
 	AccountData, Nonce,
 };
 use error::Error;
-use header::{BlockNumber, Header};
-use receipt::{RichReceipt, Receipt};
-use transaction::{self, UnverifiedTransaction, SignedTransaction, PendingTransaction};
 use state::StateInfo;
-use ethkey::Password;
 
 /// Provides methods to verify incoming external transactions
 pub trait TransactionVerifierClient: Send + Sync
@@ -95,10 +97,13 @@ pub trait MinerService : Send + Sync {
 	// Pending block
 
 	/// Get a list of all pending receipts from pending block.
-	fn pending_receipts(&self, best_block: BlockNumber) -> Option<BTreeMap<H256, Receipt>>;
+	fn pending_receipts(&self, best_block: BlockNumber) -> Option<Vec<RichReceipt>>;
 
 	/// Get a particular receipt from pending block.
-	fn pending_receipt(&self, best_block: BlockNumber, hash: &H256) -> Option<RichReceipt>;
+	fn pending_receipt(&self, best_block: BlockNumber, hash: &H256) -> Option<RichReceipt> {
+		let receipts = self.pending_receipts(best_block)?;
+		receipts.into_iter().find(|r| &r.transaction_hash == hash)
+	}
 
 	/// Get `Some` `clone()` of the current pending block's state or `None` if we're not sealing.
 	fn pending_state(&self, latest_block_number: BlockNumber) -> Option<Self::State>;
@@ -181,6 +186,9 @@ pub trait MinerService : Send + Sync {
 
 	/// Get a list of all transactions in the pool (some of them might not be ready for inclusion yet).
 	fn queued_transactions(&self) -> Vec<Arc<VerifiedTransaction>>;
+
+	/// Get a list of all transaction hashes in the pool (some of them might not be ready for inclusion yet).
+	fn queued_transaction_hashes(&self) -> Vec<H256>;
 
 	/// Get a list of local transactions with statuses.
 	fn local_transactions(&self) -> BTreeMap<H256, local_transactions::Status>;

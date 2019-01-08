@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::thread;
 use std::str::FromStr;
@@ -38,11 +38,11 @@ use ethkey::Secret;
 use ethstore::ethkey::{Generator, Random};
 use parking_lot::Mutex;
 use serde_json;
-use transaction::{Transaction, Action, SignedTransaction};
-
-use parity_reactor::Remote;
+use types::transaction::{Transaction, Action, SignedTransaction};
+use parity_runtime::{Runtime, Executor};
 
 struct SigningTester {
+	pub runtime: Runtime,
 	pub signer: Arc<SignerService>,
 	pub client: Arc<TestBlockChainClient>,
 	pub miner: Arc<TestMinerService>,
@@ -52,23 +52,25 @@ struct SigningTester {
 
 impl Default for SigningTester {
 	fn default() -> Self {
+		let runtime = Runtime::with_thread_count(1);
 		let signer = Arc::new(SignerService::new_test(false));
 		let client = Arc::new(TestBlockChainClient::default());
 		let miner = Arc::new(TestMinerService::default());
 		let accounts = Arc::new(AccountProvider::transient_provider());
-		let reservations = Arc::new(Mutex::new(nonce::Reservations::new()));
+		let reservations = Arc::new(Mutex::new(nonce::Reservations::new(runtime.executor())));
 		let mut io = IoHandler::default();
 
 		let dispatcher = FullDispatcher::new(client.clone(), miner.clone(), reservations, 50);
 
-		let remote = Remote::new_thread_per_future();
+		let executor = Executor::new_thread_per_future();
 
-		let rpc = SigningQueueClient::new(&signer, dispatcher.clone(), remote.clone(), &accounts);
+		let rpc = SigningQueueClient::new(&signer, dispatcher.clone(), executor.clone(), &accounts);
 		io.extend_with(EthSigning::to_delegate(rpc));
-		let rpc = SigningQueueClient::new(&signer, dispatcher, remote, &accounts);
+		let rpc = SigningQueueClient::new(&signer, dispatcher, executor, &accounts);
 		io.extend_with(ParitySigning::to_delegate(rpc));
 
 		SigningTester {
+			runtime,
 			signer: signer,
 			client: client,
 			miner: miner,

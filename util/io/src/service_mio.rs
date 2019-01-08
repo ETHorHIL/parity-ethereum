@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use mio::*;
 use mio::timer::{Timeout};
 use mio::deprecated::{EventLoop, Handler, Sender, EventLoopBuilder};
-use crossbeam::sync::chase_lev;
+use deque;
 use slab::Slab;
 use {IoError, IoHandler};
 use worker::{Worker, Work, WorkType};
@@ -31,7 +31,7 @@ use std::time::Duration;
 pub type TimerToken = usize;
 /// Timer ID
 pub type StreamToken = usize;
-/// IO Hadndler ID
+/// IO Handler ID
 pub type HandlerId = usize;
 
 /// Maximum number of tokens a handler can use
@@ -184,7 +184,7 @@ pub struct IoManager<Message> where Message: Send + Sync {
 	timers: Arc<RwLock<HashMap<HandlerId, UserTimer>>>,
 	handlers: Arc<RwLock<Slab<Arc<IoHandler<Message>>>>>,
 	workers: Vec<Worker>,
-	worker_channel: chase_lev::Worker<Work<Message>>,
+	worker_channel: deque::Worker<Work<Message>>,
 	work_ready: Arc<Condvar>,
 }
 
@@ -194,7 +194,7 @@ impl<Message> IoManager<Message> where Message: Send + Sync + 'static {
 		event_loop: &mut EventLoop<IoManager<Message>>,
 		handlers: Arc<RwLock<Slab<Arc<IoHandler<Message>>>>>
 	) -> Result<(), IoError> {
-		let (worker, stealer) = chase_lev::deque();
+		let (worker, stealer) = deque::fifo();
 		let num_workers = 4;
 		let work_ready_mutex =  Arc::new(Mutex::new(()));
 		let work_ready = Arc::new(Condvar::new());
@@ -430,7 +430,7 @@ impl<Message> IoChannel<Message> where Message: Send + Sync + 'static {
 /// General IO Service. Starts an event loop and dispatches IO requests.
 /// 'Message' is a notification message type
 pub struct IoService<Message> where Message: Send + Sync + 'static {
-	thread: Mutex<Option<JoinHandle<()>>>,
+	thread: Option<JoinHandle<()>>,
 	host_channel: Mutex<Sender<IoMessage<Message>>>,
 	handlers: Arc<RwLock<Slab<Arc<IoHandler<Message>>>>>,
 }
@@ -448,19 +448,19 @@ impl<Message> IoService<Message> where Message: Send + Sync + 'static {
 			IoManager::<Message>::start(&mut event_loop, h).expect("Error starting IO service");
 		});
 		Ok(IoService {
-			thread: Mutex::new(Some(thread)),
+			thread: Some(thread),
 			host_channel: Mutex::new(channel),
 			handlers: handlers,
 		})
 	}
 
-	pub fn stop(&self) {
+	pub fn stop(&mut self) {
 		trace!(target: "shutdown", "[IoService] Closing...");
 		// Clear handlers so that shared pointers are not stuck on stack
 		// in Channel::send_sync
 		self.handlers.write().clear();
 		self.host_channel.lock().send(IoMessage::Shutdown).unwrap_or_else(|e| warn!("Error on IO service shutdown: {:?}", e));
-		if let Some(thread) = self.thread.lock().take() {
+		if let Some(thread) = self.thread.take() {
 			thread.join().unwrap_or_else(|e| {
 				debug!(target: "shutdown", "Error joining IO service event loop thread: {:?}", e);
 			});

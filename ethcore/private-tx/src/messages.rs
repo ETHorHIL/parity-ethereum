@@ -1,39 +1,65 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use ethereum_types::{H256, U256, Address};
 use bytes::Bytes;
 use hash::keccak;
 use rlp::Encodable;
 use ethkey::Signature;
-use transaction::signature::{add_chain_replay_protection, check_replay_protection};
+use types::transaction::signature::{add_chain_replay_protection, check_replay_protection};
 
 /// Message with private transaction encrypted
 #[derive(Default, Debug, Clone, PartialEq, RlpEncodable, RlpDecodable, Eq)]
 pub struct PrivateTransaction {
 	/// Encrypted data
-	pub encrypted: Bytes,
+	encrypted: Bytes,
 	/// Address of the contract
-	pub contract: Address,
+	contract: Address,
+	/// Hash
+	hash: H256,
 }
 
 impl PrivateTransaction {
-	/// Compute hash on private transaction
+	/// Constructor
+	pub fn new(encrypted: Bytes, contract: Address) -> Self {
+		PrivateTransaction {
+			encrypted,
+			contract,
+			hash: 0.into(),
+		}.compute_hash()
+	}
+
+	fn compute_hash(mut self) -> PrivateTransaction {
+		self.hash = keccak(&*self.rlp_bytes());
+		self
+	}
+
+	/// Hash of the private transaction
 	pub fn hash(&self) -> H256 {
-		keccak(&*self.rlp_bytes())
+		self.hash
+	}
+
+	/// Address of the contract
+	pub fn contract(&self) -> Address {
+		self.contract
+	}
+
+	/// Encrypted data
+	pub fn encrypted(&self) -> Bytes {
+		self.encrypted.clone()
 	}
 }
 
@@ -49,6 +75,8 @@ pub struct SignedPrivateTransaction {
 	r: U256,
 	/// The S field of the signature
 	s: U256,
+	/// Hash
+	hash: H256,
 }
 
 impl SignedPrivateTransaction {
@@ -59,7 +87,13 @@ impl SignedPrivateTransaction {
 			r: sig.r().into(),
 			s: sig.s().into(),
 			v: add_chain_replay_protection(sig.v() as u64, chain_id),
-		}
+			hash: 0.into(),
+		}.compute_hash()
+	}
+
+	fn compute_hash(mut self) -> SignedPrivateTransaction {
+		self.hash = keccak(&*self.rlp_bytes());
+		self
 	}
 
 	pub fn standard_v(&self) -> u8 { check_replay_protection(self.v) }
@@ -72,5 +106,10 @@ impl SignedPrivateTransaction {
 	/// Get the hash of of the original transaction.
 	pub fn private_transaction_hash(&self) -> H256 {
 		self.private_transaction_hash
+	}
+
+	/// Own hash
+	pub fn hash(&self) -> H256 {
+		self.hash
 	}
 }

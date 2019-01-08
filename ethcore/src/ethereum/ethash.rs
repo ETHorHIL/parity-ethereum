@@ -1,34 +1,37 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::path::Path;
 use std::cmp;
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
-use hash::{KECCAK_EMPTY_LIST_RLP};
-use engines::block_reward::{self, RewardKind};
-use ethash::{self, quick_get_difficulty, slow_hash_block_number, EthashManager, OptimizeFor};
-use ethereum_types::{H256, H64, U256, Address};
-use unexpected::{OutOfBounds, Mismatch};
-use block::*;
-use error::{BlockError, Error};
-use header::{Header, BlockNumber, ExtendedHeader};
-use engines::{self, Engine};
+
+use ethereum_types::{H256, H64, U256};
 use ethjson;
+use hash::{KECCAK_EMPTY_LIST_RLP};
 use rlp::Rlp;
+use types::header::{Header, ExtendedHeader};
+use types::BlockNumber;
+use unexpected::{OutOfBounds, Mismatch};
+
+use block::ExecutedBlock;
+use engines::block_reward::{self, BlockRewardContract, RewardKind};
+use engines::{self, Engine};
+use error::{BlockError, Error};
+use ethash::{self, quick_get_difficulty, slow_hash_block_number, EthashManager, OptimizeFor};
 use machine::EthereumMachine;
 
 /// Number of blocks in an ethash snapshot.
@@ -36,8 +39,6 @@ use machine::EthereumMachine;
 const SNAPSHOT_BLOCKS: u64 = 5000;
 /// Maximum number of blocks allowed in an ethash snapshot.
 const MAX_SNAPSHOT_BLOCKS: u64 = 30000;
-
-const DEFAULT_EIP649_DELAY: u64 = 3_000_000;
 
 /// Ethash specific seal
 #[derive(Debug, PartialEq)]
@@ -100,30 +101,18 @@ pub struct EthashParams {
 	pub ecip1010_continue_transition: u64,
 	/// Total block number for one ECIP-1017 era.
 	pub ecip1017_era_rounds: u64,
-	/// Number of first block where MCIP-3 begins.
-	pub mcip3_transition: u64,
-	/// MCIP-3 Block reward coin-base for miners.
-	pub mcip3_miner_reward: U256,
-	/// MCIP-3 Block reward ubi-base for basic income.
-	pub mcip3_ubi_reward: U256,
-	/// MCIP-3 contract address for universal basic income.
-	pub mcip3_ubi_contract: Address,
-	/// MCIP-3 Block reward dev-base for dev funds.
-	pub mcip3_dev_reward: U256,
-	/// MCIP-3 contract address for the developer funds.
-	pub mcip3_dev_contract: Address,
 	/// Block reward in base units.
-	pub block_reward: U256,
-	/// EIP-649 transition block.
-	pub eip649_transition: u64,
-	/// EIP-649 bomb delay.
-	pub eip649_delay: u64,
-	/// EIP-649 base reward.
-	pub eip649_reward: Option<U256>,
+	pub block_reward: BTreeMap<BlockNumber, U256>,
 	/// EXPIP-2 block height
 	pub expip2_transition: u64,
 	/// EXPIP-2 duration limit
 	pub expip2_duration_limit: u64,
+	/// Block reward contract transition block.
+	pub block_reward_contract_transition: u64,
+	/// Block reward contract.
+	pub block_reward_contract: Option<BlockRewardContract>,
+	/// Difficulty bomb delays.
+	pub difficulty_bomb_delays: BTreeMap<BlockNumber, BlockNumber>,
 }
 
 impl From<ethjson::spec::EthashParams> for EthashParams {
@@ -142,18 +131,37 @@ impl From<ethjson::spec::EthashParams> for EthashParams {
 			ecip1010_pause_transition: p.ecip1010_pause_transition.map_or(u64::max_value(), Into::into),
 			ecip1010_continue_transition: p.ecip1010_continue_transition.map_or(u64::max_value(), Into::into),
 			ecip1017_era_rounds: p.ecip1017_era_rounds.map_or(u64::max_value(), Into::into),
-			mcip3_transition: p.mcip3_transition.map_or(u64::max_value(), Into::into),
-			mcip3_miner_reward: p.mcip3_miner_reward.map_or_else(Default::default, Into::into),
-			mcip3_ubi_reward: p.mcip3_ubi_reward.map_or(U256::from(0), Into::into),
-			mcip3_ubi_contract: p.mcip3_ubi_contract.map_or_else(Address::new, Into::into),
-			mcip3_dev_reward: p.mcip3_dev_reward.map_or(U256::from(0), Into::into),
-			mcip3_dev_contract: p.mcip3_dev_contract.map_or_else(Address::new, Into::into),
-			block_reward: p.block_reward.map_or_else(Default::default, Into::into),
-			eip649_transition: p.eip649_transition.map_or(u64::max_value(), Into::into),
-			eip649_delay: p.eip649_delay.map_or(DEFAULT_EIP649_DELAY, Into::into),
-			eip649_reward: p.eip649_reward.map(Into::into),
+			block_reward: p.block_reward.map_or_else(
+				|| {
+					let mut ret = BTreeMap::new();
+					ret.insert(0, U256::zero());
+					ret
+				},
+				|reward| {
+					match reward {
+						ethjson::spec::BlockReward::Single(reward) => {
+							let mut ret = BTreeMap::new();
+							ret.insert(0, reward.into());
+							ret
+						},
+						ethjson::spec::BlockReward::Multi(multi) => {
+							multi.into_iter()
+								.map(|(block, reward)| (block.into(), reward.into()))
+								.collect()
+						},
+					}
+				}),
 			expip2_transition: p.expip2_transition.map_or(u64::max_value(), Into::into),
 			expip2_duration_limit: p.expip2_duration_limit.map_or(30, Into::into),
+			block_reward_contract_transition: p.block_reward_contract_transition.map_or(0, Into::into),
+			block_reward_contract: match (p.block_reward_contract_code, p.block_reward_contract_address) {
+				(Some(code), _) => Some(BlockRewardContract::new_from_code(Arc::new(code.into()))),
+				(_, Some(address)) => Some(BlockRewardContract::new_from_address(address.into())),
+				(None, None) => None,
+			},
+			difficulty_bomb_delays: p.difficulty_bomb_delays.unwrap_or_default().into_iter()
+				.map(|(block, delay)| (block.into(), delay.into()))
+				.collect()
 		}
 	}
 }
@@ -217,6 +225,8 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 
 	fn maximum_uncle_count(&self, _block: BlockNumber) -> usize { 2 }
 
+	fn maximum_gas_limit(&self) -> Option<U256> { Some(0x7fff_ffff_ffff_ffffu64.into()) }
+
 	fn populate_from_parent(&self, header: &mut Header, parent: &Header) {
 		let difficulty = self.calculate_difficulty(header, parent);
 		header.set_difficulty(difficulty);
@@ -231,51 +241,56 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 		let author = *LiveBlock::header(&*block).author();
 		let number = LiveBlock::header(&*block).number();
 
-		let mut rewards = Vec::new();
+		let rewards = match self.ethash_params.block_reward_contract {
+			Some(ref c) if number >= self.ethash_params.block_reward_contract_transition => {
+				let mut beneficiaries = Vec::new();
 
-		// Applies EIP-649 reward.
-		let reward = if number >= self.ethash_params.eip649_transition {
-			self.ethash_params.eip649_reward.unwrap_or(self.ethash_params.block_reward)
-		} else {
-			self.ethash_params.block_reward
+				beneficiaries.push((author, RewardKind::Author));
+				for u in LiveBlock::uncles(&*block) {
+					let uncle_author = u.author();
+					beneficiaries.push((*uncle_author, RewardKind::uncle(number, u.number())));
+				}
+
+				let mut call = engines::default_system_or_code_call(&self.machine, block);
+
+				let rewards = c.reward(&beneficiaries, &mut call)?;
+				rewards.into_iter().map(|(author, amount)| (author, RewardKind::External, amount)).collect()
+			},
+			_ => {
+				let mut rewards = Vec::new();
+
+				let (_, reward) = self.ethash_params.block_reward.iter()
+					.rev()
+					.find(|&(block, _)| *block <= number)
+					.expect("Current block's reward is not found; this indicates a chain config error; qed");
+				let reward = *reward;
+
+				// Applies ECIP-1017 eras.
+				let eras_rounds = self.ethash_params.ecip1017_era_rounds;
+				let (eras, reward) = ecip1017_eras_block_reward(eras_rounds, reward, number);
+
+				let n_uncles = LiveBlock::uncles(&*block).len();
+
+				// Bestow block rewards.
+				let mut result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
+
+				rewards.push((author, RewardKind::Author, result_block_reward));
+
+				// Bestow uncle rewards.
+				for u in LiveBlock::uncles(&*block) {
+					let uncle_author = u.author();
+					let result_uncle_reward = if eras == 0 {
+						(reward * U256::from(8 + u.number() - number)).shr(3)
+					} else {
+						reward.shr(5)
+					};
+
+					rewards.push((*uncle_author, RewardKind::uncle(number, u.number()), result_uncle_reward));
+				}
+
+				rewards
+			},
 		};
-
-		// Applies ECIP-1017 eras.
-		let eras_rounds = self.ethash_params.ecip1017_era_rounds;
-		let (eras, reward) = ecip1017_eras_block_reward(eras_rounds, reward, number);
-
-		let n_uncles = LiveBlock::uncles(&*block).len();
-
-		// Bestow block rewards.
-		let mut result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
-
-		if number >= self.ethash_params.mcip3_transition {
-			result_block_reward = self.ethash_params.mcip3_miner_reward;
-
-			let ubi_contract = self.ethash_params.mcip3_ubi_contract;
-			let ubi_reward = self.ethash_params.mcip3_ubi_reward;
-			let dev_contract = self.ethash_params.mcip3_dev_contract;
-			let dev_reward = self.ethash_params.mcip3_dev_reward;
-
-			rewards.push((author, RewardKind::Author, result_block_reward));
-			rewards.push((ubi_contract, RewardKind::External, ubi_reward));
-			rewards.push((dev_contract, RewardKind::External, dev_reward));
-
-		} else {
-			rewards.push((author, RewardKind::Author, result_block_reward));
-		}
-
-		// Bestow uncle rewards.
-		for u in LiveBlock::uncles(&*block) {
-			let uncle_author = u.author();
-			let result_uncle_reward = if eras == 0 {
-				(reward * U256::from(8 + u.number() - number)).shr(3)
-			} else {
-				reward.shr(5)
-			};
-
-			rewards.push((*uncle_author, RewardKind::Uncle, result_uncle_reward));
-		}
 
 		block_reward::apply_block_rewards(&rewards, block, &self.machine)
 	}
@@ -310,10 +325,6 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 
 		if &difficulty < header.difficulty() {
 			return Err(From::from(BlockError::InvalidProofOfWork(OutOfBounds { min: Some(header.difficulty().clone()), max: None, found: difficulty })));
-		}
-
-		if header.gas_limit() > &0x7fffffffffffffffu64.into() {
-			return Err(From::from(BlockError::InvalidGasLimit(OutOfBounds { min: None, max: Some(0x7fffffffffffffffu64.into()), found: header.gas_limit().clone() })));
 		}
 
 		Ok(())
@@ -427,19 +438,20 @@ impl Ethash {
 		if header.number() < self.ethash_params.bomb_defuse_transition {
 			if header.number() < self.ethash_params.ecip1010_pause_transition {
 				let mut number = header.number();
-				if number >= self.ethash_params.eip649_transition {
-					number = number.saturating_sub(self.ethash_params.eip649_delay);
+				let original_number = number;
+				for (block, delay) in &self.ethash_params.difficulty_bomb_delays {
+					if original_number >= *block {
+						number = number.saturating_sub(*delay);
+					}
 				}
 				let period = (number / EXP_DIFF_PERIOD) as usize;
 				if period > 1 {
 					target = cmp::max(min_difficulty, target + (U256::from(1) << (period - 2)));
 				}
-			}
-			else if header.number() < self.ethash_params.ecip1010_continue_transition {
+			} else if header.number() < self.ethash_params.ecip1010_continue_transition {
 				let fixed_difficulty = ((self.ethash_params.ecip1010_pause_transition / EXP_DIFF_PERIOD) - 2) as usize;
 				target = cmp::max(min_difficulty, target + (U256::from(1) << fixed_difficulty));
-			}
-			else {
+			} else {
 				let period = ((parent.number() + 1) / EXP_DIFF_PERIOD) as usize;
 				let delay = ((self.ethash_params.ecip1010_continue_transition - self.ethash_params.ecip1010_pause_transition) / EXP_DIFF_PERIOD) as usize;
 				target = cmp::max(min_difficulty, target + (U256::from(1) << (period - delay - 2)));
@@ -468,11 +480,12 @@ fn ecip1017_eras_block_reward(era_rounds: u64, mut reward: U256, block_number:u6
 mod tests {
 	use std::str::FromStr;
 	use std::sync::Arc;
+	use std::collections::BTreeMap;
 	use ethereum_types::{H64, H256, U256, Address};
 	use block::*;
 	use test_helpers::get_temp_state_db;
 	use error::{BlockError, Error, ErrorKind};
-	use header::Header;
+	use types::header::Header;
 	use spec::Spec;
 	use engines::Engine;
 	use super::super::{new_morden, new_mcip3_test, new_homestead_test_machine};
@@ -493,7 +506,11 @@ mod tests {
 			metropolis_difficulty_increment_divisor: 9,
 			homestead_transition: 1150000,
 			duration_limit: 13,
-			block_reward: 0.into(),
+			block_reward: {
+				let mut ret = BTreeMap::new();
+				ret.insert(0, 0.into());
+				ret
+			},
 			difficulty_hardfork_transition: u64::max_value(),
 			difficulty_hardfork_bound_divisor: U256::from(0),
 			bomb_defuse_transition: u64::max_value(),
@@ -501,17 +518,11 @@ mod tests {
 			ecip1010_pause_transition: u64::max_value(),
 			ecip1010_continue_transition: u64::max_value(),
 			ecip1017_era_rounds: u64::max_value(),
-			mcip3_transition: u64::max_value(),
-			mcip3_miner_reward: 0.into(),
-			mcip3_ubi_reward: 0.into(),
-			mcip3_ubi_contract: "0000000000000000000000000000000000000001".into(),
-			mcip3_dev_reward: 0.into(),
-			mcip3_dev_contract: "0000000000000000000000000000000000000001".into(),
-			eip649_transition: u64::max_value(),
-			eip649_delay: 3_000_000,
-			eip649_reward: None,
 			expip2_transition: u64::max_value(),
 			expip2_duration_limit: 30,
+			block_reward_contract: None,
+			block_reward_contract_transition: 0,
+			difficulty_bomb_delays: BTreeMap::new(),
 		}
 	}
 
@@ -633,7 +644,7 @@ mod tests {
 	fn can_do_difficulty_verification_fail() {
 		let engine = test_spec().engine;
 		let mut header: Header = Header::default();
-		header.set_seal(vec![rlp::encode(&H256::zero()).into_vec(), rlp::encode(&H64::zero()).into_vec()]);
+		header.set_seal(vec![rlp::encode(&H256::zero()), rlp::encode(&H64::zero())]);
 
 		let verify_result = engine.verify_block_basic(&header);
 
@@ -648,7 +659,7 @@ mod tests {
 	fn can_do_proof_of_work_verification_fail() {
 		let engine = test_spec().engine;
 		let mut header: Header = Header::default();
-		header.set_seal(vec![rlp::encode(&H256::zero()).into_vec(), rlp::encode(&H64::zero()).into_vec()]);
+		header.set_seal(vec![rlp::encode(&H256::zero()), rlp::encode(&H64::zero())]);
 		header.set_difficulty(U256::from_str("ffffffffffffffffffffffffffffffffffffffffffffaaaaaaaaaaaaaaaaaaaa").unwrap());
 
 		let verify_result = engine.verify_block_basic(&header);
@@ -689,7 +700,7 @@ mod tests {
 	fn can_do_seal256_verification_fail() {
 		let engine = test_spec().engine;
 		let mut header: Header = Header::default();
-		header.set_seal(vec![rlp::encode(&H256::zero()).into_vec(), rlp::encode(&H64::zero()).into_vec()]);
+		header.set_seal(vec![rlp::encode(&H256::zero()), rlp::encode(&H64::zero())]);
 		let verify_result = engine.verify_block_unordered(&header);
 
 		match verify_result {
@@ -703,7 +714,7 @@ mod tests {
 	fn can_do_proof_of_work_unordered_verification_fail() {
 		let engine = test_spec().engine;
 		let mut header: Header = Header::default();
-		header.set_seal(vec![rlp::encode(&H256::from("b251bd2e0283d0658f2cadfdc8ca619b5de94eca5742725e2e757dd13ed7503d")).into_vec(), rlp::encode(&H64::zero()).into_vec()]);
+		header.set_seal(vec![rlp::encode(&H256::from("b251bd2e0283d0658f2cadfdc8ca619b5de94eca5742725e2e757dd13ed7503d")), rlp::encode(&H64::zero())]);
 		header.set_difficulty(U256::from_str("ffffffffffffffffffffffffffffffffffffffffffffaaaaaaaaaaaaaaaaaaaa").unwrap());
 
 		let verify_result = engine.verify_block_unordered(&header);
@@ -896,7 +907,7 @@ mod tests {
 		let tempdir = TempDir::new("").unwrap();
 		let ethash = Ethash::new(tempdir.path(), ethparams, machine, None);
 		let mut header = Header::default();
-		header.set_seal(vec![rlp::encode(&H256::from("b251bd2e0283d0658f2cadfdc8ca619b5de94eca5742725e2e757dd13ed7503d")).into_vec(), rlp::encode(&H64::zero()).into_vec()]);
+		header.set_seal(vec![rlp::encode(&H256::from("b251bd2e0283d0658f2cadfdc8ca619b5de94eca5742725e2e757dd13ed7503d")), rlp::encode(&H64::zero())]);
 		let info = ethash.extra_info(&header);
 		assert_eq!(info["nonce"], "0x0000000000000000");
 		assert_eq!(info["mixHash"], "0xb251bd2e0283d0658f2cadfdc8ca619b5de94eca5742725e2e757dd13ed7503d");

@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Disk-backed `HashDB` implementation.
 
@@ -26,7 +26,7 @@ use ethereum_types::H256;
 use hashdb::*;
 use heapsize::HeapSizeOf;
 use keccak_hasher::KeccakHasher;
-use kvdb::{KeyValueDB, DBTransaction};
+use kvdb::{KeyValueDB, DBTransaction, DBValue};
 use memorydb::*;
 use parking_lot::RwLock;
 use rlp::{encode, decode};
@@ -107,7 +107,7 @@ enum RemoveFrom {
 ///
 /// TODO: `store_reclaim_period`
 pub struct EarlyMergeDB {
-	overlay: MemoryDB<KeccakHasher>,
+	overlay: MemoryDB<KeccakHasher, DBValue>,
 	backing: Arc<KeyValueDB>,
 	refs: Option<Arc<RwLock<HashMap<H256, RefInfo>>>>,
 	latest_era: Option<u64>,
@@ -287,7 +287,7 @@ impl EarlyMergeDB {
 	}
 }
 
-impl HashDB<KeccakHasher> for EarlyMergeDB {
+impl HashDB<KeccakHasher, DBValue> for EarlyMergeDB {
 	fn keys(&self) -> HashMap<H256, i32> {
 		let mut ret: HashMap<H256, i32> = self.backing.iter(self.column)
 			.map(|(key, _)| (H256::from_slice(&*key), 1))
@@ -514,7 +514,7 @@ impl JournalDB for EarlyMergeDB {
 		Ok(ops)
 	}
 
-	fn consolidate(&mut self, with: MemoryDB<KeccakHasher>) {
+	fn consolidate(&mut self, with: MemoryDB<KeccakHasher, DBValue>) {
 		self.overlay.consolidate(with);
 	}
 }
@@ -523,10 +523,9 @@ impl JournalDB for EarlyMergeDB {
 mod tests {
 
 	use keccak::keccak;
-	use hashdb::{HashDB, DBValue};
+	use hashdb::HashDB;
 	use super::*;
 	use super::super::traits::JournalDB;
-	use ethcore_logger::init_log;
 	use kvdb_memorydb;
 
 	#[test]
@@ -823,7 +822,7 @@ mod tests {
 
 	#[test]
 	fn insert_delete_insert_delete_insert_expunge() {
-		init_log();
+		let _ = ::env_logger::try_init();
 
 		let mut jdb = new_db();
 
@@ -850,7 +849,7 @@ mod tests {
 
 	#[test]
 	fn forked_insert_delete_insert_delete_insert_expunge() {
-		init_log();
+		let _ = ::env_logger::try_init();
 		let mut jdb = new_db();
 
 		// history is 4
@@ -959,7 +958,7 @@ mod tests {
 
 	#[test]
 	fn reopen_remove_three() {
-		init_log();
+		let _ = ::env_logger::try_init();
 
 		let shared_db = Arc::new(kvdb_memorydb::create(0));
 		let foo = keccak(b"foo");

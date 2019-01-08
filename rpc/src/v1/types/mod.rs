@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! RPC types
 
@@ -43,17 +43,19 @@ mod transaction_condition;
 mod uint;
 mod work;
 mod private_receipt;
+mod eip191;
 
 pub mod pubsub;
 
-pub use self::account_info::{AccountInfo, ExtAccountInfo, HwAccountInfo};
+pub use self::eip191::{EIP191Version, PresignedTransaction};
+pub use self::account_info::{AccountInfo, ExtAccountInfo, HwAccountInfo, EthAccount, StorageProof, RecoveredAccount};
 pub use self::bytes::Bytes;
 pub use self::block::{RichBlock, Block, BlockTransactions, Header, RichHeader, Rich};
-pub use self::block_number::{BlockNumber, block_number_to_id};
+pub use self::block_number::{BlockNumber, LightBlockNumber, block_number_to_id};
 pub use self::call_request::CallRequest;
 pub use self::confirmations::{
 	ConfirmationPayload, ConfirmationRequest, ConfirmationResponse, ConfirmationResponseWithToken,
-	TransactionModification, SignRequest, DecryptRequest, Either
+	TransactionModification, EIP191SignRequest, EthSignRequest, DecryptRequest, Either
 };
 pub use self::consensus_status::*;
 pub use self::derivation::{DeriveHash, DeriveHierarchical, Derive};

@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -50,6 +50,31 @@ impl BlockNumber {
 		match *self {
 			BlockNumber::Num(ref x) => Some(*x),
 			_ => None,
+		}
+	}
+}
+
+/// BlockNumber to BlockId conversion
+///
+/// NOTE use only for light clients.
+pub trait LightBlockNumber {
+	/// Convert block number to block id.
+	fn to_block_id(self) -> BlockId;
+}
+
+impl LightBlockNumber for BlockNumber {
+	fn to_block_id(self) -> BlockId {
+		// NOTE Here we treat `Pending` as `Latest`.
+		// Since light clients don't produce pending blocks
+		// (they don't have state) we can safely fallback to `Latest`.
+		match self {
+			BlockNumber::Num(n) => BlockId::Number(n),
+			BlockNumber::Earliest => BlockId::Earliest,
+			BlockNumber::Latest => BlockId::Latest,
+			BlockNumber::Pending => {
+				warn!("`Pending` is deprecated and may be removed in future versions. Falling back to `Latest`");
+				BlockId::Latest
+			}
 		}
 	}
 }

@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! I/O and event context generalizations.
 
@@ -44,6 +44,9 @@ pub trait IoContext {
 
 	/// Persistent peer id
 	fn persistent_peer_id(&self, peer: PeerId) -> Option<NodeId>;
+
+	/// Whether given peer id is reserved peer
+	fn is_reserved_peer(&self, peer: PeerId) -> bool;
 }
 
 impl<T> IoContext for T where T: ?Sized + NetworkContext {
@@ -75,6 +78,10 @@ impl<T> IoContext for T where T: ?Sized + NetworkContext {
 
 	fn persistent_peer_id(&self, peer: PeerId) -> Option<NodeId> {
 		self.session_info(peer).and_then(|info| info.id)
+	}
+
+	fn is_reserved_peer(&self, peer: PeerId) -> bool {
+		NetworkContext::is_reserved_peer(self, peer)
 	}
 }
 
@@ -126,7 +133,7 @@ impl<'a> BasicContext for TickCtx<'a> {
 	}
 
 	fn request_from(&self, peer: PeerId, requests: Requests) -> Result<ReqId, Error> {
-		self.proto.request_from(self.io, &peer, requests)
+		self.proto.request_from(self.io, peer, requests)
 	}
 
 	fn make_announcement(&self, announcement: Announcement) {
@@ -159,7 +166,7 @@ impl<'a> BasicContext for Ctx<'a> {
 	}
 
 	fn request_from(&self, peer: PeerId, requests: Requests) -> Result<ReqId, Error> {
-		self.proto.request_from(self.io, &peer, requests)
+		self.proto.request_from(self.io, peer, requests)
 	}
 
 	fn make_announcement(&self, announcement: Announcement) {

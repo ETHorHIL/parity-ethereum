@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! VM Instructions list and utility functions
 
@@ -45,7 +45,7 @@ macro_rules! enum_with_from_u8 {
 enum_with_from_u8! {
 	#[doc = "Virtual machine bytecode instruction."]
 	#[repr(u8)]
-	#[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Debug)]
+	#[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Debug, Hash)]
 	pub enum Instruction {
 		#[doc = "halts execution"]
 		STOP = 0x00,
@@ -328,7 +328,7 @@ enum_with_from_u8! {
 		#[doc = "like CALLCODE but keeps caller's value and sender"]
 		DELEGATECALL = 0xf4,
 		#[doc = "create a new account and set creation address to sha3(sender + sha3(init code)) % 2**160"]
-		CREATE2 = 0xfb,
+		CREATE2 = 0xf5,
 		#[doc = "stop execution and revert state changes. Return output data."]
 		REVERT = 0xfd,
 		#[doc = "like CALL but it does not take value, nor modify the state"]
@@ -354,7 +354,6 @@ impl Instruction {
 		}
 	}
 
-
 	/// Returns stack position of item to duplicate
 	/// DUP1 -> 0
 	pub fn dup_position(&self) -> Option<usize> {
@@ -364,7 +363,6 @@ impl Instruction {
 			None
 		}
 	}
-
 
 	/// Returns stack position of item to SWAP top with
 	/// SWAP1 -> 1

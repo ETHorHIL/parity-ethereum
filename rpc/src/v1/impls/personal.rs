@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Account management (personal) rpc implementation
 use std::sync::Arc;
@@ -20,13 +20,13 @@ use std::time::Duration;
 
 use bytes::{Bytes, ToPretty};
 use ethcore::account_provider::AccountProvider;
-use transaction::PendingTransaction;
+use types::transaction::PendingTransaction;
 use ethereum_types::{H520, U128, Address};
 use ethkey::{public_to_address, recover, Signature};
 
 use jsonrpc_core::{BoxFuture, Result};
 use jsonrpc_core::futures::{future, Future};
-use v1::helpers::errors;
+use v1::helpers::{errors, eip191};
 use v1::helpers::dispatch::{self, eth_data_hash, Dispatcher, SignWith};
 use v1::traits::Personal;
 use v1::types::{
@@ -36,23 +36,33 @@ use v1::types::{
 	ConfirmationResponse as RpcConfirmationResponse,
 	TransactionRequest,
 	RichRawTransaction as RpcRichRawTransaction,
+	EIP191Version,
 };
 use v1::metadata::Metadata;
+use eip_712::{EIP712, hash_structured_data};
+use jsonrpc_core::types::Value;
 
 /// Account management (personal) rpc implementation.
 pub struct PersonalClient<D: Dispatcher> {
 	accounts: Arc<AccountProvider>,
 	dispatcher: D,
 	allow_perm_unlock: bool,
+	allow_experimental_rpcs: bool,
 }
 
 impl<D: Dispatcher> PersonalClient<D> {
 	/// Creates new PersonalClient
-	pub fn new(accounts: &Arc<AccountProvider>, dispatcher: D, allow_perm_unlock: bool) -> Self {
+	pub fn new(
+		accounts: &Arc<AccountProvider>,
+		dispatcher: D,
+		allow_perm_unlock: bool,
+		allow_experimental_rpcs: bool,
+	) -> Self {
 		PersonalClient {
 			accounts: accounts.clone(),
 			dispatcher,
 			allow_perm_unlock,
+			allow_experimental_rpcs,
 		}
 	}
 }
@@ -150,6 +160,53 @@ impl<D: Dispatcher + 'static> Personal for PersonalClient<D> {
 				 }))
 	}
 
+	fn sign_191(&self, version: EIP191Version, data: Value, account: RpcH160, password: String) -> BoxFuture<RpcH520> {
+		try_bf!(errors::require_experimental(self.allow_experimental_rpcs, "191"));
+
+		let data = try_bf!(eip191::hash_message(version, data));
+		let dispatcher = self.dispatcher.clone();
+		let accounts = self.accounts.clone();
+
+		let payload = RpcConfirmationPayload::EIP191SignMessage((account.clone(), data.into()).into());
+
+		Box::new(dispatch::from_rpc(payload, account.into(), &dispatcher)
+			.and_then(|payload| {
+				dispatch::execute(dispatcher, accounts, payload, dispatch::SignWith::Password(password.into()))
+			})
+			.map(|v| v.into_value())
+			.then(|res| match res {
+				Ok(RpcConfirmationResponse::Signature(signature)) => Ok(signature),
+				Err(e) => Err(e),
+				e => Err(errors::internal("Unexpected result", e)),
+			})
+		)
+	}
+
+	fn sign_typed_data(&self, typed_data: EIP712, account: RpcH160, password: String) -> BoxFuture<RpcH520> {
+		try_bf!(errors::require_experimental(self.allow_experimental_rpcs, "712"));
+
+		let data = match hash_structured_data(typed_data) {
+			Ok(d) => d,
+			Err(err) => return Box::new(future::err(errors::invalid_call_data(err.kind()))),
+		};
+		let dispatcher = self.dispatcher.clone();
+		let accounts = self.accounts.clone();
+
+		let payload = RpcConfirmationPayload::EIP191SignMessage((account.clone(), data.into()).into());
+
+		Box::new(dispatch::from_rpc(payload, account.into(), &dispatcher)
+			.and_then(|payload| {
+				dispatch::execute(dispatcher, accounts, payload, dispatch::SignWith::Password(password.into()))
+			})
+			.map(|v| v.into_value())
+			.then(|res| match res {
+				Ok(RpcConfirmationResponse::Signature(signature)) => Ok(signature),
+				Err(e) => Err(e),
+				e => Err(errors::internal("Unexpected result", e)),
+			})
+		)
+	}
+
 	fn ec_recover(&self, data: RpcBytes, signature: RpcH520) -> BoxFuture<RpcH160> {
 		let signature: H520 = signature.into();
 		let signature = Signature::from_electrum(&signature);
@@ -175,7 +232,7 @@ impl<D: Dispatcher + 'static> Personal for PersonalClient<D> {
 			.and_then(|(pending_tx, dispatcher)| {
 				let chain_id = pending_tx.chain_id();
 				trace!(target: "miner", "send_transaction: dispatching tx: {} for chain ID {:?}",
-					::rlp::encode(&*pending_tx).into_vec().pretty(), chain_id);
+					::rlp::encode(&*pending_tx).pretty(), chain_id);
 
 				dispatcher.dispatch_transaction(pending_tx).map(Into::into)
 			})

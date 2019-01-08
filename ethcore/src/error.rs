@@ -1,34 +1,36 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! General error types for use in ethcore.
 
 use std::{fmt, error};
 use std::time::SystemTime;
+
 use ethereum_types::{H256, U256, Address, Bloom};
-use snappy::InvalidInput;
-use unexpected::{Mismatch, OutOfBounds};
-use ethtrie::TrieError;
-use io::*;
-use header::BlockNumber;
-use snapshot::Error as SnapshotError;
-use engines::EngineError;
 use ethkey::Error as EthkeyError;
+use ethtrie::TrieError;
+use rlp;
+use snappy::InvalidInput;
+use snapshot::Error as SnapshotError;
+use types::transaction::Error as TransactionError;
+use types::BlockNumber;
+use unexpected::{Mismatch, OutOfBounds};
+
 use account_provider::SignError as AccountsError;
-use transaction::Error as TransactionError;
+use engines::EngineError;
 
 pub use executed::{ExecutionError, CallError};
 
@@ -164,7 +166,7 @@ error_chain! {
 	}
 
 	foreign_links {
-		Channel(IoError) #[doc = "Io channel error"];
+		Channel(::io::IoError) #[doc = "Io channel error"];
 	}
 }
 
@@ -194,40 +196,6 @@ error_chain! {
 	}
 }
 
-error_chain! {
-	types {
-		BlockImportError, BlockImportErrorKind, BlockImportErrorResultExt;
-	}
-
-	links {
-		Import(ImportError, ImportErrorKind) #[doc = "Import error"];
-		Queue(QueueError, QueueErrorKind) #[doc = "Io channel queue error"];
-	}
-
-	foreign_links {
-		Block(BlockError) #[doc = "Block error"];
-		Decoder(::rlp::DecoderError) #[doc = "Rlp decoding error"];
-	}
-
-	errors {
-		#[doc = "Other error"]
-		Other(err: String) {
-			description("Other error")
-			display("Other error {}", err)
-		}
-	}
-}
-
-impl From<Error> for BlockImportError {
-	fn from(e: Error) -> Self {
-		match e {
-			Error(ErrorKind::Block(block_error), _) => BlockImportErrorKind::Block(block_error).into(),
-			Error(ErrorKind::Import(import_error), _) => BlockImportErrorKind::Import(import_error.into()).into(),
-			_ => BlockImportErrorKind::Other(format!("other block import error: {:?}", e)).into(),
-		}
-	}
-}
-
 /// Api-level error for transaction import
 #[derive(Debug, Clone)]
 pub enum TransactionImportError {
@@ -253,10 +221,11 @@ error_chain! {
 
 	links {
 		Import(ImportError, ImportErrorKind) #[doc = "Error concerning block import." ];
+		Queue(QueueError, QueueErrorKind) #[doc = "Io channel queue error"];
 	}
 
 	foreign_links {
-		Io(IoError) #[doc = "Io create error"];
+		Io(::io::IoError) #[doc = "Io create error"];
 		StdIo(::std::io::Error) #[doc = "Error concerning the Rust standard library's IO subsystem."];
 		Trie(TrieError) #[doc = "Error concerning TrieDBs."];
 		Execution(ExecutionError) #[doc = "Error concerning EVM code execution."];
@@ -265,6 +234,7 @@ error_chain! {
 		Snappy(InvalidInput) #[doc = "Snappy error."];
 		Engine(EngineError) #[doc = "Consensus vote error."];
 		Ethkey(EthkeyError) #[doc = "Ethkey error."];
+		Decoder(rlp::DecoderError) #[doc = "RLP decoding errors"];
 	}
 
 	errors {
@@ -297,37 +267,12 @@ error_chain! {
 			description("Unknown engine name")
 			display("Unknown engine name ({})", name)
 		}
-
-		#[doc = "RLP decoding errors"]
-		Decoder(err: ::rlp::DecoderError) {
-			description("decoding value failed")
-			display("decoding value failed with error: {}", err)
-		}
 	}
 }
-
-/// Result of import block operation.
-pub type ImportResult = EthcoreResult<H256>;
 
 impl From<AccountsError> for Error {
 	fn from(err: AccountsError) -> Error {
 		ErrorKind::AccountProvider(err).into()
-	}
-}
-
-impl From<::rlp::DecoderError> for Error {
-	fn from(err: ::rlp::DecoderError) -> Error {
-		ErrorKind::Decoder(err).into()
-	}
-}
-
-impl From<BlockImportError> for Error {
-	fn from(err: BlockImportError) -> Error {
-		match err {
-			BlockImportError(BlockImportErrorKind::Block(e), _) => ErrorKind::Block(e).into(),
-			BlockImportError(BlockImportErrorKind::Import(e), _) => ErrorKind::Import(e).into(),
-			_ => ErrorKind::Msg(format!("other block import error: {:?}", err)).into(),
-		}
 	}
 }
 

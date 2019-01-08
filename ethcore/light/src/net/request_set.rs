@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Pending request set.
 //!
@@ -73,7 +73,7 @@ impl RequestSet {
 	}
 
 	/// Remove a set of requests from the stack.
-	pub fn remove(&mut self, req_id: &ReqId, now: Instant) -> Option<Requests> {
+	pub fn remove(&mut self, req_id: ReqId, now: Instant) -> Option<Requests> {
 		let id = match self.ids.remove(&req_id) {
 			Some(id) => id,
 			None => return None,
@@ -165,7 +165,7 @@ mod tests {
 		let test_end = test_begin + req_time;
 		assert!(req_set.check_timeout(test_end));
 
-		req_set.remove(&ReqId(0), test_begin + Duration::from_secs(1)).unwrap();
+		req_set.remove(ReqId(0), test_begin + Duration::from_secs(1)).unwrap();
 		assert!(!req_set.check_timeout(test_end));
 		assert!(req_set.check_timeout(test_end + Duration::from_secs(1)));
 	}
@@ -183,7 +183,7 @@ mod tests {
 		}
 
 		for i in (0..5).rev() {
-			assert!(req_set.remove(&ReqId(i), test_end).is_some());
+			assert!(req_set.remove(ReqId(i), test_end).is_some());
 			assert_eq!(req_set.cumulative_cost, i.into());
 		}
 	}

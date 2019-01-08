@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Signing RPC implementation.
 
@@ -44,7 +44,7 @@ use v1::types::{
 	Origin,
 };
 
-use parity_reactor::Remote;
+use parity_runtime::Executor;
 
 /// After 60s entries that are not queried with `check_request` will get garbage collected.
 const MAX_PENDING_DURATION_SEC: u32 = 60;
@@ -67,7 +67,7 @@ impl Future for DispatchResult {
 	}
 }
 
-fn schedule(remote: Remote,
+fn schedule(executor: Executor,
 	confirmations: Arc<Mutex<TransientHashMap<U256, Option<RpcConfirmationResult>>>>,
 	id: U256,
 	future: RpcConfirmationReceiver) {
@@ -83,7 +83,7 @@ fn schedule(remote: Remote,
 		confirmations.insert(id, Some(result));
 		Ok(())
 	});
-	remote.spawn(future);
+	executor.spawn(future);
 }
 
 /// Implementation of functions that require signing when no trusted signer is used.
@@ -91,19 +91,19 @@ pub struct SigningQueueClient<D> {
 	signer: Arc<SignerService>,
 	accounts: Arc<AccountProvider>,
 	dispatcher: D,
-	remote: Remote,
+	executor: Executor,
 	// None here means that the request hasn't yet been confirmed
 	confirmations: Arc<Mutex<TransientHashMap<U256, Option<RpcConfirmationResult>>>>,
 }
 
 impl<D: Dispatcher + 'static> SigningQueueClient<D> {
 	/// Creates a new signing queue client given shared signing queue.
-	pub fn new(signer: &Arc<SignerService>, dispatcher: D, remote: Remote, accounts: &Arc<AccountProvider>) -> Self {
+	pub fn new(signer: &Arc<SignerService>, dispatcher: D, executor: Executor, accounts: &Arc<AccountProvider>) -> Self {
 		SigningQueueClient {
 			signer: signer.clone(),
 			accounts: accounts.clone(),
 			dispatcher,
-			remote,
+			executor,
 			confirmations: Arc::new(Mutex::new(TransientHashMap::new(MAX_PENDING_DURATION_SEC))),
 		}
 	}
@@ -143,7 +143,7 @@ impl<D: Dispatcher + 'static> ParitySigning for SigningQueueClient<D> {
 	}
 
 	fn post_sign(&self, meta: Metadata, address: RpcH160, data: RpcBytes) -> BoxFuture<RpcEither<RpcU256, RpcConfirmationResponse>> {
-		let remote = self.remote.clone();
+		let executor = self.executor.clone();
 		let confirmations = self.confirmations.clone();
 
 		Box::new(self.dispatch(
@@ -153,21 +153,21 @@ impl<D: Dispatcher + 'static> ParitySigning for SigningQueueClient<D> {
 		).map(move |result| match result {
 			DispatchResult::Value(v) => RpcEither::Or(v),
 			DispatchResult::Future(id, future) => {
-				schedule(remote, confirmations, id, future);
+				schedule(executor, confirmations, id, future);
 				RpcEither::Either(id.into())
 			},
 		}))
 	}
 
 	fn post_transaction(&self, meta: Metadata, request: RpcTransactionRequest) -> BoxFuture<RpcEither<RpcU256, RpcConfirmationResponse>> {
-		let remote = self.remote.clone();
+		let executor = self.executor.clone();
 		let confirmations = self.confirmations.clone();
 
 		Box::new(self.dispatch(RpcConfirmationPayload::SendTransaction(request), DefaultAccount::Provided(self.accounts.default_account().ok().unwrap_or_default()), meta.origin)
 			.map(|result| match result {
 				DispatchResult::Value(v) => RpcEither::Or(v),
 				DispatchResult::Future(id, future) => {
-					schedule(remote, confirmations, id, future);
+					schedule(executor, confirmations, id, future);
 					RpcEither::Either(id.into())
 				},
 			}))

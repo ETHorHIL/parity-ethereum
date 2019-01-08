@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Parameters for a block chain.
 
@@ -29,15 +29,19 @@ use memorydb::MemoryDB;
 use parking_lot::RwLock;
 use rlp::{Rlp, RlpStream};
 use rustc_hex::{FromHex, ToHex};
+use types::BlockNumber;
+use types::encoded;
+use types::header::Header;
 use vm::{EnvInfo, CallType, ActionValue, ActionParams, ParamsType};
 
 use builtin::Builtin;
-use encoded;
-use engines::{EthEngine, NullEngine, InstantSeal, BasicAuthority, AuthorityRound, Tendermint, DEFAULT_BLOCKHASH_CONTRACT};
+use engines::{
+	EthEngine, NullEngine, InstantSeal, InstantSealParams, BasicAuthority,
+	AuthorityRound, DEFAULT_BLOCKHASH_CONTRACT
+};
 use error::Error;
 use executive::Executive;
 use factory::Factories;
-use header::{BlockNumber, Header};
 use machine::EthereumMachine;
 use pod_state::PodState;
 use spec::Genesis;
@@ -96,8 +100,6 @@ pub struct CommonParams {
 	pub validate_receipts_transition: BlockNumber,
 	/// Validate transaction chain id.
 	pub validate_chain_id_transition: BlockNumber,
-	/// Number of first block where EIP-86 (Metropolis) rules begin.
-	pub eip86_transition: BlockNumber,
 	/// Number of first block where EIP-140 (Metropolis: REVERT opcode) rules begin.
 	pub eip140_transition: BlockNumber,
 	/// Number of first block where EIP-210 (Metropolis: BLOCKHASH changes) rules begin.
@@ -117,6 +119,10 @@ pub struct CommonParams {
 	pub eip145_transition: BlockNumber,
 	/// Number of first block where EIP-1052 rules begin.
 	pub eip1052_transition: BlockNumber,
+	/// Number of first block where EIP-1283 rules begin.
+	pub eip1283_transition: BlockNumber,
+	/// Number of first block where EIP-1014 rules begin.
+	pub eip1014_transition: BlockNumber,
 	/// Number of first block where dust cleanup rules (EIP-168 and EIP169) begin.
 	pub dust_protection_transition: BlockNumber,
 	/// Nonce cap increase per block. Nonce cap is only checked if dust protection is enabled.
@@ -177,12 +183,13 @@ impl CommonParams {
 
 	/// Apply common spec config parameters to the schedule.
 	pub fn update_schedule(&self, block_number: u64, schedule: &mut ::vm::Schedule) {
-		schedule.have_create2 = block_number >= self.eip86_transition;
+		schedule.have_create2 = block_number >= self.eip1014_transition;
 		schedule.have_revert = block_number >= self.eip140_transition;
 		schedule.have_static_call = block_number >= self.eip214_transition;
 		schedule.have_return_data = block_number >= self.eip211_transition;
 		schedule.have_bitwise_shifting = block_number >= self.eip145_transition;
 		schedule.have_extcodehash = block_number >= self.eip1052_transition;
+		schedule.eip1283 = block_number >= self.eip1283_transition;
 		if block_number >= self.eip210_transition {
 			schedule.blockhash_gas = 800;
 		}
@@ -244,14 +251,13 @@ impl From<ethjson::spec::Params> for CommonParams {
 			eip160_transition: p.eip160_transition.map_or(0, Into::into),
 			eip161abc_transition: p.eip161abc_transition.map_or(0, Into::into),
 			eip161d_transition: p.eip161d_transition.map_or(0, Into::into),
-			eip98_transition: p.eip98_transition.map_or(0, Into::into),
-			eip155_transition: p.eip155_transition.map_or(0, Into::into),
-			validate_receipts_transition: p.validate_receipts_transition.map_or(0, Into::into),
-			validate_chain_id_transition: p.validate_chain_id_transition.map_or(0, Into::into),
-			eip86_transition: p.eip86_transition.map_or_else(
+			eip98_transition: p.eip98_transition.map_or_else(
 				BlockNumber::max_value,
 				Into::into,
 			),
+			eip155_transition: p.eip155_transition.map_or(0, Into::into),
+			validate_receipts_transition: p.validate_receipts_transition.map_or(0, Into::into),
+			validate_chain_id_transition: p.validate_chain_id_transition.map_or(0, Into::into),
 			eip140_transition: p.eip140_transition.map_or_else(
 				BlockNumber::max_value,
 				Into::into,
@@ -287,6 +293,14 @@ impl From<ethjson::spec::Params> for CommonParams {
 				Into::into,
 			),
 			eip1052_transition: p.eip1052_transition.map_or_else(
+				BlockNumber::max_value,
+				Into::into,
+			),
+			eip1283_transition: p.eip1283_transition.map_or_else(
+				BlockNumber::max_value,
+				Into::into,
+			),
+			eip1014_transition: p.eip1014_transition.map_or_else(
 				BlockNumber::max_value,
 				Into::into,
 			),
@@ -589,12 +603,11 @@ impl Spec {
 		match engine_spec {
 			ethjson::spec::Engine::Null(null) => Arc::new(NullEngine::new(null.params.into(), machine)),
 			ethjson::spec::Engine::Ethash(ethash) => Arc::new(::ethereum::Ethash::new(spec_params.cache_dir, ethash.params.into(), machine, spec_params.optimization_setting)),
-			ethjson::spec::Engine::InstantSeal => Arc::new(InstantSeal::new(machine)),
+			ethjson::spec::Engine::InstantSeal(Some(instant_seal)) => Arc::new(InstantSeal::new(instant_seal.params.into(), machine)),
+			ethjson::spec::Engine::InstantSeal(None) => Arc::new(InstantSeal::new(InstantSealParams::default(), machine)),
 			ethjson::spec::Engine::BasicAuthority(basic_authority) => Arc::new(BasicAuthority::new(basic_authority.params.into(), machine)),
 			ethjson::spec::Engine::AuthorityRound(authority_round) => AuthorityRound::new(authority_round.params.into(), machine)
 				.expect("Failed to start AuthorityRound consensus engine."),
-			ethjson::spec::Engine::Tendermint(tendermint) => Tendermint::new(tendermint.params.into(), machine)
-				.expect("Failed to start the Tendermint consensus engine."),
 		}
 	}
 
@@ -828,7 +841,7 @@ impl Spec {
 	/// initialize genesis epoch data, using in-memory database for
 	/// constructor.
 	pub fn genesis_epoch_data(&self) -> Result<Vec<u8>, String> {
-		use transaction::{Action, Transaction};
+		use types::transaction::{Action, Transaction};
 		use journaldb;
 		use kvdb_memorydb;
 
@@ -866,14 +879,13 @@ impl Spec {
 				data: d,
 			}.fake_sign(from);
 
-			let res = ::state::prove_transaction(
+			let res = ::state::prove_transaction_virtual(
 				db.as_hashdb_mut(),
 				*genesis.state_root(),
 				&tx,
 				self.engine.machine(),
 				&env_info,
 				factories.clone(),
-				true,
 			);
 
 			res.map(|(out, proof)| {
@@ -942,14 +954,6 @@ impl Spec {
 		load_bundled!("authority_round_block_reward_contract")
 	}
 
-	/// Create a new Spec with Tendermint consensus which does internal sealing (not requiring
-	/// work).
-	/// Account keccak("0") and keccak("1") are a authorities.
-	#[cfg(any(test, feature = "test-helpers"))]
-	pub fn new_test_tendermint() -> Self {
-		load_bundled!("tendermint")
-	}
-
 	/// TestList.sol used in both specs: https://github.com/paritytech/contracts/pull/30/files
 	/// Accounts with secrets keccak("0") and keccak("1") are initially the validators.
 	/// Create a new Spec with BasicAuthority which uses a contract at address 5 to determine
@@ -986,8 +990,9 @@ mod tests {
 	use super::*;
 	use state::State;
 	use test_helpers::get_temp_state_db;
-	use views::BlockView;
 	use tempdir::TempDir;
+	use types::view;
+	use types::views::BlockView;
 
 	// https://github.com/paritytech/parity-ethereum/issues/1840
 	#[test]
@@ -1013,7 +1018,7 @@ mod tests {
 
 	#[test]
 	fn genesis_constructor() {
-		::ethcore_logger::init_log();
+		let _ = ::env_logger::try_init();
 		let spec = Spec::new_test_constructor();
 		let db = spec.ensure_db_good(get_temp_state_db(), &Default::default())
 			.unwrap();

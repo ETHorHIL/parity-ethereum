@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{io, net, fmt};
 use libc::{ENFILE, EMFILE};
@@ -85,6 +85,7 @@ error_chain! {
 	foreign_links {
 		SocketIo(IoError) #[doc = "Socket IO error."];
 		Decompression(snappy::InvalidInput) #[doc = "Decompression error."];
+		Rlp(rlp::DecoderError) #[doc = "Rlp decoder error."];
 	}
 
 	errors {
@@ -172,12 +173,6 @@ impl From<io::Error> for Error {
 	}
 }
 
-impl From<rlp::DecoderError> for Error {
-	fn from(_err: rlp::DecoderError) -> Self {
-		ErrorKind::Auth.into()
-	}
-}
-
 impl From<ethkey::Error> for Error {
 	fn from(_err: ethkey::Error) -> Self {
 		ErrorKind::Auth.into()
@@ -210,7 +205,7 @@ fn test_errors() {
 	assert_eq!(DisconnectReason::Unknown, r);
 
 	match *<Error as From<rlp::DecoderError>>::from(rlp::DecoderError::RlpIsTooBig).kind() {
-		ErrorKind::Auth => {},
+		ErrorKind::Rlp(_) => {},
 		_ => panic!("Unexpected error"),
 	}
 

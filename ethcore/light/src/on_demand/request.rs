@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Request types, verification, and verification errors.
 
@@ -20,11 +20,12 @@ use std::cmp;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use ethcore::basic_account::BasicAccount;
-use ethcore::encoded;
+use common_types::basic_account::BasicAccount;
+use common_types::encoded;
+use common_types::receipt::Receipt;
+use common_types::transaction::SignedTransaction;
 use ethcore::engines::{EthEngine, StateDependentProof};
 use ethcore::machine::EthereumMachine;
-use ethcore::receipt::Receipt;
 use ethcore::state::{self, ProvedExecution};
 use ethereum_types::{H256, U256, Address};
 use ethtrie::{TrieError, TrieDB};
@@ -35,7 +36,6 @@ use memorydb::MemoryDB;
 use parking_lot::Mutex;
 use request::{self as net_request, IncompleteRequest, CompleteRequest, Output, OutputKind, Field};
 use rlp::{RlpStream, Rlp};
-use transaction::SignedTransaction;
 use trie::Trie;
 use vm::EnvInfo;
 
@@ -224,7 +224,7 @@ impl HeaderRef {
 	fn field(&self) -> Field<H256> {
 		match *self {
 			HeaderRef::Stored(ref hdr) => Field::Scalar(hdr.hash()),
-			HeaderRef::Unresolved(_, ref field) => field.clone(),
+			HeaderRef::Unresolved(_, field) => field,
 		}
 	}
 
@@ -232,7 +232,7 @@ impl HeaderRef {
 	fn needs_header(&self) -> Option<(usize, Field<H256>)> {
 		match *self {
 			HeaderRef::Stored(_) => None,
-			HeaderRef::Unresolved(idx, ref field) => Some((idx, field.clone())),
+			HeaderRef::Unresolved(idx, field) => Some((idx, field)),
 		}
 	}
 }
@@ -292,7 +292,7 @@ impl From<Request> for CheckedRequest {
 			}
 			Request::TransactionIndex(req) => {
 				let net_req = net_request::IncompleteTransactionIndexRequest {
-					hash: req.0.clone(),
+					hash: req.0,
 				};
 				trace!(target: "on_demand", "TransactionIndex Request, {:?}", net_req);
 				CheckedRequest::TransactionIndex(req, net_req)
@@ -322,7 +322,7 @@ impl From<Request> for CheckedRequest {
 			Request::Code(req) => {
 				let net_req = net_request::IncompleteCodeRequest {
 					block_hash: req.header.field(),
-					code_hash: req.code_hash.into(),
+					code_hash: req.code_hash,
 				};
 				trace!(target: "on_demand", "Code Request, {:?}", net_req);
 				CheckedRequest::Code(req, net_req)
@@ -404,7 +404,7 @@ impl CheckedRequest {
 		match *self {
 			CheckedRequest::HeaderProof(ref check, _) => {
 				let mut cache = cache.lock();
-				cache.block_hash(&check.num)
+				cache.block_hash(check.num)
 					.and_then(|h| cache.chain_score(&h).map(|s| (h, s)))
 					.map(|(h, s)| Response::HeaderProof((h, s)))
 			}
@@ -448,7 +448,7 @@ impl CheckedRequest {
 			}
 			CheckedRequest::Body(ref check, ref req) => {
 				// check for empty body.
-				if let Some(hdr) = check.0.as_ref().ok() {
+				if let Ok(hdr) = check.0.as_ref() {
 					if hdr.transactions_root() == KECCAK_NULL_RLP && hdr.uncles_hash() == KECCAK_EMPTY_LIST_RLP {
 						let mut stream = RlpStream::new_list(3);
 						stream.append_raw(hdr.rlp().as_raw(), 1);
@@ -769,9 +769,9 @@ impl HeaderProof {
 	/// Provide the expected CHT root to compare against.
 	pub fn new(num: u64, cht_root: H256) -> Option<Self> {
 		::cht::block_to_cht_number(num).map(|cht_num| HeaderProof {
-			num: num,
-			cht_num: cht_num,
-			cht_root: cht_root,
+			num,
+			cht_num,
+			cht_root,
 		})
 	}
 
@@ -817,9 +817,9 @@ impl HeaderWithAncestors {
 		headers: &[encoded::Header]
 	) -> Result<Vec<encoded::Header>, Error> {
 		let expected_hash = match (self.block_hash, start) {
-			(Field::Scalar(ref h), &net_request::HashOrNumber::Hash(ref h2)) => {
-				if h != h2 { return Err(Error::WrongHash(*h, *h2)) }
-				*h
+			(Field::Scalar(h), &net_request::HashOrNumber::Hash(h2)) => {
+				if h != h2 { return Err(Error::WrongHash(h, h2)) }
+				h
 			}
 			(_, &net_request::HashOrNumber::Hash(h2)) => h2,
 			_ => return Err(Error::HeaderByNumber),
@@ -871,9 +871,9 @@ impl HeaderByHash {
 		headers: &[encoded::Header]
 	) -> Result<encoded::Header, Error> {
 		let expected_hash = match (self.0, start) {
-			(Field::Scalar(ref h), &net_request::HashOrNumber::Hash(ref h2)) => {
-				if h != h2 { return Err(Error::WrongHash(*h, *h2)) }
-				*h
+			(Field::Scalar(h), &net_request::HashOrNumber::Hash(h2)) => {
+				if h != h2 { return Err(Error::WrongHash(h, h2)) }
+				h
 			}
 			(_, &net_request::HashOrNumber::Hash(h2)) => h2,
 			_ => return Err(Error::HeaderByNumber),
@@ -881,12 +881,11 @@ impl HeaderByHash {
 
 		let header = headers.get(0).ok_or(Error::Empty)?;
 		let hash = header.hash();
-		match hash == expected_hash {
-			true => {
-				cache.lock().insert_block_header(hash, header.clone());
-				Ok(header.clone())
-			}
-			false => Err(Error::WrongHash(expected_hash, hash)),
+		if hash == expected_hash {
+			cache.lock().insert_block_header(hash, header.clone());
+			Ok(header.clone())
+		} else {
+			Err(Error::WrongHash(expected_hash, hash))
 		}
 	}
 }
@@ -957,15 +956,12 @@ impl BlockReceipts {
 		let receipts_root = self.0.as_ref()?.receipts_root();
 		let found_root = ::triehash::ordered_trie_root(receipts.iter().map(|r| ::rlp::encode(r)));
 
-		match receipts_root == found_root {
-			true => {
-				cache.lock().insert_block_receipts(receipts_root, receipts.to_vec());
-				Ok(receipts.to_vec())
-			}
-			false => {
-				trace!(target: "on_demand", "Receipt Reponse: \"WrongTrieRoot\" receipts_root: {:?} found_root: {:?}", receipts_root, found_root);
-				Err(Error::WrongTrieRoot(receipts_root, found_root))
-			}
+		if receipts_root == found_root {
+			cache.lock().insert_block_receipts(receipts_root, receipts.to_vec());
+			Ok(receipts.to_vec())
+		} else {
+			trace!(target: "on_demand", "Receipt Reponse: \"WrongTrieRoot\" receipts_root: {:?} found_root: {:?}", receipts_root, found_root);
+			Err(Error::WrongTrieRoot(receipts_root, found_root))
 		}
 	}
 }
@@ -1052,7 +1048,7 @@ impl TransactionProof {
 		let root = self.header.as_ref()?.state_root();
 
 		let mut env_info = self.env_info.clone();
-		env_info.gas_limit = self.tx.gas.clone();
+		env_info.gas_limit = self.tx.gas;
 
 		let proved_execution = state::check_proof(
 			state_items,
@@ -1112,10 +1108,10 @@ mod tests {
 	use trie::Recorder;
 	use hash::keccak;
 
-	use ::ethcore::client::{BlockChainClient, BlockInfo, TestBlockChainClient, EachBlockWith};
-	use ethcore::header::Header;
-	use ethcore::encoded;
-	use ethcore::receipt::{Receipt, TransactionOutcome};
+	use ethcore::client::{BlockChainClient, BlockInfo, TestBlockChainClient, EachBlockWith};
+	use common_types::header::Header;
+	use common_types::encoded;
+	use common_types::receipt::{Receipt, TransactionOutcome};
 
 	fn make_cache() -> ::cache::Cache {
 		::cache::Cache::new(Default::default(), Duration::from_secs(1))
@@ -1160,7 +1156,7 @@ mod tests {
 		header.set_number(10_000);
 		header.set_extra_data(b"test_header".to_vec());
 		let hash = header.hash();
-		let raw_header = encoded::Header::new(::rlp::encode(&header).into_vec());
+		let raw_header = encoded::Header::new(::rlp::encode(&header));
 
 		let cache = Mutex::new(make_cache());
 		assert!(HeaderByHash(hash.into()).check_response(&cache, &hash.into(), &[raw_header]).is_ok())
@@ -1181,14 +1177,14 @@ mod tests {
 		headers.reverse();  // because responses are in reverse order
 
 		let raw_headers = headers.iter()
-			.map(|hdr| encoded::Header::new(::rlp::encode(hdr).into_vec()))
+			.map(|hdr| encoded::Header::new(::rlp::encode(hdr)))
 			.collect::<Vec<_>>();
 
 		let mut invalid_successor = Header::new();
 		invalid_successor.set_number(11);
 		invalid_successor.set_parent_hash(headers[1].hash());
 
-		let raw_invalid_successor = encoded::Header::new(::rlp::encode(&invalid_successor).into_vec());
+		let raw_invalid_successor = encoded::Header::new(::rlp::encode(&invalid_successor));
 
 		let cache = Mutex::new(make_cache());
 
@@ -1251,10 +1247,10 @@ mod tests {
 		let mut body_stream = RlpStream::new_list(2);
 		body_stream.begin_list(0).begin_list(0);
 
-		let req = Body(encoded::Header::new(::rlp::encode(&header).into_vec()).into());
+		let req = Body(encoded::Header::new(::rlp::encode(&header)).into());
 
 		let cache = Mutex::new(make_cache());
-		let response = encoded::Body::new(body_stream.drain().into_vec());
+		let response = encoded::Body::new(body_stream.drain());
 		assert!(req.check_response(&cache, &response).is_ok())
 	}
 
@@ -1274,7 +1270,7 @@ mod tests {
 
 		header.set_receipts_root(receipts_root);
 
-		let req = BlockReceipts(encoded::Header::new(::rlp::encode(&header).into_vec()).into());
+		let req = BlockReceipts(encoded::Header::new(::rlp::encode(&header)).into());
 
 		let cache = Mutex::new(make_cache());
 		assert!(req.check_response(&cache, &receipts).is_ok())
@@ -1322,7 +1318,7 @@ mod tests {
 		header.set_state_root(root.clone());
 
 		let req = Account {
-			header: encoded::Header::new(::rlp::encode(&header).into_vec()).into(),
+			header: encoded::Header::new(::rlp::encode(&header)).into(),
 			address: addr,
 		};
 
@@ -1336,7 +1332,7 @@ mod tests {
 		let code_hash = keccak(&code);
 		let header = Header::new();
 		let req = Code {
-			header: encoded::Header::new(::rlp::encode(&header).into_vec()).into(),
+			header: encoded::Header::new(::rlp::encode(&header)).into(),
 			code_hash: code_hash.into(),
 		};
 

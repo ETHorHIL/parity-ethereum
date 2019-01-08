@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use discovery::{TableUpdates, NodeEntry};
 use ethereum_types::H512;
@@ -385,7 +385,7 @@ impl NodeTable {
 			None => return,
 		};
 		if let Err(e) = fs::create_dir_all(&path) {
-			warn!("Error creating node table directory: {:?}", e);
+			warn!(target: "network", "Error creating node table directory: {:?}", e);
 			return;
 		}
 		path.push(NODES_FILE);
@@ -400,11 +400,11 @@ impl NodeTable {
 		match fs::File::create(&path) {
 			Ok(file) => {
 				if let Err(e) = serde_json::to_writer_pretty(file, &table) {
-					warn!("Error writing node table file: {:?}", e);
+					warn!(target: "network", "Error writing node table file: {:?}", e);
 				}
 			},
 			Err(e) => {
-				warn!("Error creating node table file: {:?}", e);
+				warn!(target: "network", "Error creating node table file: {:?}", e);
 			}
 		}
 	}
@@ -418,7 +418,7 @@ impl NodeTable {
 		let file = match fs::File::open(&path) {
 			Ok(file) => file,
 			Err(e) => {
-				debug!("Error opening node table file: {:?}", e);
+				debug!(target: "network", "Error opening node table file: {:?}", e);
 				return Default::default();
 			},
 		};
@@ -431,7 +431,7 @@ impl NodeTable {
 					.collect()
 			},
 			Err(e) => {
-				warn!("Error reading node table file: {:?}", e);
+				warn!(target: "network", "Error reading node table file: {:?}", e);
 				Default::default()
 			},
 		}
@@ -624,19 +624,29 @@ mod tests {
 
 		// unknown - node 6
 
+		// nodes are also ordered according to their addition time
+		//
+		// nanosecond precision lost since mac os x high sierra update so let's not compare their order
+		// https://github.com/paritytech/parity-ethereum/issues/9632
 		let r = table.nodes(&IpFilter::default());
 
-		assert_eq!(r[0][..], id4[..]); // most recent success
-		assert_eq!(r[1][..], id3[..]);
+		// most recent success
+		assert!(
+			(r[0] == id4 && r[1] == id3) ||
+			(r[0] == id3 && r[1] == id4)
+		);
 
 		// unknown (old contacts and new nodes), randomly shuffled
 		assert!(
-			r[2][..] == id5[..] && r[3][..] == id6[..] ||
-			r[2][..] == id6[..] && r[3][..] == id5[..]
+			(r[2] == id5 && r[3] == id6) ||
+			(r[2] == id6 && r[3] == id5)
 		);
 
-		assert_eq!(r[4][..], id1[..]); // oldest failure
-		assert_eq!(r[5][..], id2[..]);
+		// oldest failure
+		assert!(
+			(r[4] == id1 && r[5] == id2) ||
+			(r[4] == id2 && r[5] == id1)
+		);
 	}
 
 	#[test]
